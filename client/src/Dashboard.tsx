@@ -1,4 +1,5 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState } from 'react';
+import { getPrices } from './api';
 import { Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -10,552 +11,561 @@ import {
   Tooltip,
   Legend,
 } from 'chart.js';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
-
-// Vite provides import.meta.env globally, no need for custom interfaces
-
-// Fix Leaflet icon issue
-import icon from 'leaflet/dist/images/marker-icon.png';
-// @ts-ignore
-import iconShadow from 'leaflet/dist/images/marker-shadow.png';
-
-let DefaultIcon = L.icon({
-  iconUrl: icon,
-  shadowUrl: iconShadow,
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-});
-
-L.Marker.prototype.options.icon = DefaultIcon;
-
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
-// Types
-interface User {
-  id: string;
-  name: string;
-  email: string;
-  role: 'trucker' | 'owner';
-}
-
-interface AuthResponse {
-  access_token: string;
-  token_type: string;
-  user: User;
-}
-
-interface PriceItem {
-  period: string;
-  value: string | number;
-  'area-name': string;
-  'product-name': string;
-  duoarea: string;
-  product: string;
-}
-
-interface Alert {
-  id: string;
-  product: string;
-  area: string;
-  threshold: number;
-  created_at: string;
-}
-
-interface Order {
-  id: string;
-  product: string;
-  area: string;
-  quantity: number;
-  target_price: number;
-  location?: string;
-  status: string;
-  created_at: string;
-}
-
-// API Client
-// Make sure to use the FastAPI backend URL for all API calls
-class ApiClient {
-  private baseURL: string;
-  private token: string | null = null;
-
-  constructor() {
-    // Use FastAPI backend URL, not frontend dev server
-    this.baseURL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-    this.token = localStorage.getItem('token');
-    console.log('ApiClient constructor - token from localStorage:', this.token ? 'Token found' : 'No token');
-  }
-
-  setToken(token: string | null) {
-    this.token = token;
-    if (token) {
-      localStorage.setItem('token', token);
-    } else {
-      localStorage.removeItem('token');
-    }
-  }
-
-  async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    // Always get the latest token from localStorage
-    this.token = localStorage.getItem('token');
-    
-    const headers: HeadersInit = {
-      'Content-Type': 'application/json',
-      ...(this.token && { Authorization: `Bearer ${this.token}` }),
-      ...options.headers,
-    };
-
-    const response = await fetch(`${this.baseURL}${endpoint}`, {
-      ...options,
-      headers,
-    });
-
-    const text = await response.text();
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (e) {
-      throw new Error(`Invalid JSON response: ${text}`);
-    }
-
-    if (!response.ok) {
-      throw new Error(data.detail || `API Error: ${response.status}`);
-    }
-
-    return data;
-  }
-
-  // Auth methods
-  async login(email: string, password: string): Promise<AuthResponse> {
-    // Use form data for FastAPI /auth/login endpoint
-    const formData = new FormData();
-    formData.append('username', email); // Backend expects 'username' field for email
-    formData.append('password', password);
-    
-    const response = await fetch(`${this.baseURL}/auth/login`, {
-      method: 'POST',
-      body: formData,
-    });
-
-    const text = await response.text();
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (e) {
-      throw new Error(`Invalid JSON response: ${text}`);
-    }
-
-    if (!response.ok) {
-      throw new Error(data.detail || `API Error: ${response.status}`);
-    }
-
-    console.log('Login successful, token received:', data.access_token ? 'Token present' : 'No token');
-    this.setToken(data.access_token);
-    console.log('Token set in localStorage:', localStorage.getItem('token') ? 'Token stored' : 'No token stored');
-    return data;
-  }
-
-  async register(name: string, email: string, password: string, role: string): Promise<User> {
-    return this.request<User>('/auth/register', {
-      method: 'POST',
-      body: JSON.stringify({ name, email, password, role }),
-    });
-  }
-
-  // Data methods
-  async getPrices() {
-    return this.request('/prices');
-  }
-
-  async createAlert(product: string, area: string, threshold: number): Promise<Alert> {
-    return this.request<Alert>('/alerts', {
-      method: 'POST',
-      body: JSON.stringify({ product, area, threshold }),
-    });
-  }
-
-  async getAlerts(): Promise<Alert[]> {
-    // GET /alerts
-    console.log('Getting alerts with token:', this.token ? 'Token present' : 'No token');
-    return this.request<Alert[]>('/alerts', { method: 'GET' });
-  }
-
-  async deleteAlert(alertId: string): Promise<void> {
-    // DELETE /alerts/{alertId}
-    await this.request(`/alerts/${alertId}`, { method: 'DELETE' });
-  }
-
-  async createOrder(product: string, area: string, quantity: number, target_price: number, location?: string): Promise<Order> {
-    // POST /orders
-    return this.request<Order>('/orders', {
-      method: 'POST',
-      body: JSON.stringify({ product, area, quantity, target_price, location }),
-    });
-  }
-
-  async getOrders(): Promise<Order[]> {
-    // GET /orders
-    return this.request<Order[]>('/orders', { method: 'GET' });
-  }
-
-  async createPaymentIntent(amount: number) {
-    return this.request('/payments/create-intent', {
-      method: 'POST',
-      body: JSON.stringify({ amount }),
-    });
-  }
-}
-
-const apiClient = new ApiClient();
-
-// Styles
+// Modern dashboard styles
 const styles = {
   appBg: {
     minHeight: '100vh',
-    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+    width: '100vw',
+    background: 'linear-gradient(120deg, #e3e8ee 0%, #f8fafc 100%)',
     margin: 0,
     padding: 0,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
   },
   header: {
-    background: 'rgba(0, 0, 0, 0.2)',
-    backdropFilter: 'blur(10px)',
+    width: '100%',
+    background: '#1a237e',
     color: '#fff',
-    padding: '1.5rem 2rem',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    boxShadow: '0 2px 12px rgba(0, 0, 0, 0.1)',
-  },
-  container: {
-    maxWidth: '1400px',
-    margin: '2rem auto',
-    padding: '0 2rem',
-  },
-  card: {
-    background: 'rgba(255, 255, 255, 0.95)',
-    borderRadius: '16px',
-    padding: '2rem',
-    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+    padding: '1.5rem 0',
+    fontSize: 36,
+    fontWeight: 900,
+    textAlign: 'center',
+    letterSpacing: 2,
+    boxShadow: '0 2px 12px #0002',
     marginBottom: '2rem',
   },
-  button: {
-    padding: '0.75rem 1.5rem',
-    borderRadius: '8px',
-    border: 'none',
-    background: '#667eea',
-    color: '#fff',
-    fontWeight: '600',
-    cursor: 'pointer',
-    fontSize: '1rem',
-    transition: 'all 0.2s',
+  root: {
+    width: '90vw',
+    maxWidth: 1400,
+    margin: '0 auto',
+    background: 'linear-gradient(135deg, #f8fafc 0%, #e3e8ee 100%)',
+    borderRadius: 18,
+    boxShadow: '0 4px 32px #0002',
+    padding: '2.5rem 2rem',
+    fontFamily: 'Inter, Segoe UI, Arial, sans-serif',
+    color: '#222',
+    minHeight: 'calc(100vh - 4rem)',
   },
-  input: {
-    width: '100%',
-    padding: '0.75rem',
-    marginBottom: '1rem',
-    borderRadius: '8px',
-    border: '1px solid #e2e8f0',
-    fontSize: '1rem',
+  heading: {
+    color: '#1a237e',
+    marginBottom: 16,
+    fontWeight: 800,
+    fontSize: 32,
+    letterSpacing: 1,
+    textAlign: 'left',
   },
-  select: {
-    width: '100%',
-    padding: '0.75rem',
-    marginBottom: '1rem',
-    borderRadius: '8px',
-    border: '1px solid #e2e8f0',
-    fontSize: '1rem',
+  summaryRow: {
+    display: 'flex',
+    gap: '2rem',
+    marginBottom: '2.5rem',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+  },
+  card: {
+    flex: 1,
+    minWidth: 220,
+    background: 'linear-gradient(120deg, #fff 60%, #e3e8ee 100%)',
+    borderRadius: 12,
+    padding: '1.5rem 1rem',
+    boxShadow: '0 2px 12px #0001',
+    textAlign: 'center',
+    margin: '0.5rem',
+  },
+  cardTitle: {
+    margin: 0,
+    fontWeight: 700,
+    fontSize: 18,
+    color: '#1976d2',
+    marginBottom: 8,
+    letterSpacing: 0.5,
+  },
+  cardValue: {
+    fontSize: 32,
+    fontWeight: 800,
+    color: '#222',
+    marginBottom: 4,
+  },
+  cardSub: {
+    fontSize: 15,
+    color: '#555',
+  },
+  chartSection: {
+    marginBottom: '2.5rem',
     background: '#fff',
+    borderRadius: 12,
+    padding: '1.5rem',
+    boxShadow: '0 2px 8px #0001',
+  },
+  tableHeading: {
+    color: '#1976d2',
+    marginBottom: 12,
+    fontWeight: 700,
+    fontSize: 22,
+    letterSpacing: 0.5,
+  },
+  table: {
+    width: '100%',
+    borderCollapse: 'collapse',
+    fontSize: 16,
+    background: '#fff',
+    borderRadius: 10,
+    overflow: 'hidden',
+    boxShadow: '0 1px 6px #0001',
+  },
+  th: {
+    padding: '10px',
+    background: '#1976d2',
+    color: '#fff',
+    fontWeight: 700,
+    borderBottom: '2px solid #e3e8ee',
+  },
+  td: {
+    padding: '10px',
+    color: '#222',
+    fontWeight: 500,
+    borderBottom: '1px solid #e3e8ee',
+  },
+  trEven: {
+    background: '#f5f7fa',
+  },
+  trOdd: {
+    background: '#fff',
+  },
+  pagination: {
+    marginTop: '1.5rem',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: '1.5rem',
+  },
+  pageBtn: {
+    padding: '10px 20px',
+    borderRadius: 8,
+    border: 'none',
+    background: '#1976d2',
+    color: '#fff',
+    fontWeight: 700,
+    fontSize: 16,
+    cursor: 'pointer',
+    boxShadow: '0 1px 4px #0001',
+    transition: 'background 0.2s',
+    outline: 'none',
+  },
+  pageBtnDisabled: {
+    background: '#b0bec5',
+    cursor: 'not-allowed',
+  },
+  pageInfo: {
+    fontWeight: 700,
+    fontSize: 16,
+    color: '#222',
   },
 };
 
-// Auth Modal Component
-const AuthModal: React.FC<{ onSuccess: (user: User) => void }> = ({ onSuccess }) => {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [loading, setLoading] = useState(false);
+const Dashboard: React.FC = () => {
+  const [prices, setPrices] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState({
-    name: '',
-    email: '',
-    password: '',
-    role: 'trucker',
-  });
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
+  // Auth state
+  const [showAuth, setShowAuth] = useState(true);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [user, setUser] = useState<any>(null);
+  const [form, setForm] = useState({ email: '', password: '', role: 'trucker' });
+  // Price alert state (moved up)
+  const [alertForm, setAlertForm] = useState({ product: 'Diesel', area: '', threshold: '' });
+  const [alertLoading, setAlertLoading] = useState(false);
+  const [alertError, setAlertError] = useState<string | null>(null);
+  const [alertSuccess, setAlertSuccess] = useState<string | null>(null);
+  // Automated order state
+  const [orderForm, setOrderForm] = useState({ product: 'Diesel', area: '', quantity: '', targetPrice: '' });
+  const [orderLoading, setOrderLoading] = useState(false);
+  const [orderError, setOrderError] = useState<string | null>(null);
+  const [orderSuccess, setOrderSuccess] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
+  useEffect(() => {
+    if (!user) return;
+    getPrices()
+      .then(res => {
+        // ...existing code...
+        let apiData = [];
+        if (Array.isArray(res.data?.response?.data)) {
+          apiData = res.data.response.data;
+        } else if (Array.isArray(res.data?.data)) {
+          apiData = res.data.data;
+        } else if (Array.isArray(res.data)) {
+          apiData = res.data;
+        }
+        setPrices(apiData);
+        setLoading(false);
+      })
+      .catch(err => {
+        setError('Failed to fetch prices');
+        setLoading(false);
+      });
+  }, [user]);
 
-    try {
-      if (mode === 'login') {
-        const response = await apiClient.login(form.email, form.password);
-        onSuccess(response.user);
-      } else {
-        await apiClient.register(form.name, form.email, form.password, form.role);
-        // Auto-login after registration
-        const response = await apiClient.login(form.email, form.password);
-        onSuccess(response.user);
-      }
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div style={{ ...styles.appBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={styles.card}>
-        <h2 style={{ textAlign: 'center', marginBottom: '2rem', color: '#1a202c' }}>
-          Oil Price Tracker
-        </h2>
-        <form onSubmit={handleSubmit} style={{ minWidth: '320px' }}>
-          {mode === 'register' && (
+  if (loading) return <div>Loading prices...</div>;
+  if (error) return <div style={{ color: 'red' }}>{error}</div>;
+  // Auth modal
+  if (showAuth) {
+    return (
+      <div style={{ ...styles.appBg, display: 'flex', alignItems: 'center', justifyContent: 'center' } as React.CSSProperties}>
+        <div style={{ background: '#fff', borderRadius: 16, boxShadow: '0 2px 16px #0002', padding: '2.5rem 2rem', minWidth: 340 }}>
+          <h2 style={{ ...styles.heading, textAlign: 'center' }}>Oil Price Tracker</h2>
+          <div style={{ marginBottom: 18, textAlign: 'center', color: '#1976d2', fontWeight: 700, fontSize: 18 }}>
+            {authMode === 'login' ? 'Login' : 'Register'}
+          </div>
+          <form
+            onSubmit={async e => {
+              e.preventDefault();
+              setAuthLoading(true);
+              setAuthError(null);
+              try {
+                const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+                const res = await fetch(endpoint, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(form),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.message || 'Auth failed');
+                setUser(data.user);
+                setShowAuth(false);
+              } catch (err: any) {
+                setAuthError(err.message);
+              } finally {
+                setAuthLoading(false);
+              }
+            }}
+          >
             <input
-              type="text"
-              placeholder="Name"
+              type="email"
+              placeholder="Email"
+              value={form.email}
               required
-              style={styles.input}
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              style={{ width: '100%', padding: 10, marginBottom: 12, borderRadius: 8, border: '1px solid #b0bec5', fontSize: 16 }}
+              onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
             />
-          )}
-          <input
-            type="email"
-            placeholder="Email"
-            required
-            style={styles.input}
-            value={form.email}
-            onChange={(e) => setForm({ ...form, email: e.target.value })}
-          />
-          <input
-            type="password"
-            placeholder="Password (min 6 characters)"
-            required
-            minLength={6}
-            style={styles.input}
-            value={form.password}
-            onChange={(e) => setForm({ ...form, password: e.target.value })}
-          />
-          {mode === 'register' && (
+            <input
+              type="password"
+              placeholder="Password"
+              value={form.password}
+              required
+              style={{ width: '100%', padding: 10, marginBottom: 12, borderRadius: 8, border: '1px solid #b0bec5', fontSize: 16 }}
+              onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+            />
             <select
-              style={styles.select}
               value={form.role}
-              onChange={(e) => setForm({ ...form, role: e.target.value })}
+              style={{ width: '100%', padding: 10, marginBottom: 18, borderRadius: 8, border: '1px solid #b0bec5', fontSize: 16 }}
+              onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
             >
               <option value="trucker">Trucker</option>
               <option value="owner">Truck Stop Owner</option>
             </select>
-          )}
-          {error && (
-            <div style={{ color: '#e53e3e', marginBottom: '1rem', textAlign: 'center' }}>
-              {error}
-            </div>
-          )}
-          <button
-            type="submit"
-            disabled={loading}
-            style={{ ...styles.button, width: '100%', marginBottom: '1rem' }}
-          >
-            {loading ? 'Processing...' : mode === 'login' ? 'Login' : 'Register'}
-          </button>
-        </form>
-        <div style={{ textAlign: 'center' }}>
-          <button
-            onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
-            style={{ background: 'none', border: 'none', color: '#667eea', cursor: 'pointer' }}
-          >
-            {mode === 'login' ? "Don't have an account? Register" : 'Already have an account? Login'}
-          </button>
+            {authError && <div style={{ color: 'red', marginBottom: 10 }}>{authError}</div>}
+            <button
+              type="submit"
+              disabled={authLoading}
+              style={{ ...styles.pageBtn, width: '100%', marginBottom: 10 }}
+            >
+              {authLoading ? 'Processing...' : (authMode === 'login' ? 'Login' : 'Register')}
+            </button>
+          </form>
+          <div style={{ textAlign: 'center', marginTop: 8 }}>
+            {authMode === 'login' ? (
+              <span>Don&apos;t have an account?{' '}
+                <button style={{ color: '#1976d2', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 700 }} onClick={() => setAuthMode('register')}>Register</button>
+              </span>
+            ) : (
+              <span>Already have an account?{' '}
+                <button style={{ color: '#1976d2', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 700 }} onClick={() => setAuthMode('login')}>Login</button>
+              </span>
+            )}
+          </div>
         </div>
-      </div>
-    </div>
-  );
-};
-
-// Main Dashboard Component
-// All hooks must be called unconditionally at the top level of the component
-const Dashboard: React.FC = () => {
-  // Hooks at top level
-  const [user, setUser] = useState<User | null>(null);
-  const [prices, setPrices] = useState<PriceItem[]>([]);
-  const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
-  const pageSize = 20;
-  const [alertForm, setAlertForm] = useState({ product: 'Diesel', area: '', threshold: '' });
-  const [orderForm, setOrderForm] = useState({ product: 'Diesel', area: '', quantity: '', targetPrice: '' });
-
-  // Chart and table hooks
-  const latestPrice = prices[0] || { value: 0, period: '-', 'area-name': '-' };
-  const priceValues = prices.map(p => parseFloat(String(p.value))).filter(v => !isNaN(v));
-  const avgPrice = priceValues.length ? (priceValues.reduce((a, b) => a + b, 0) / priceValues.length).toFixed(3) : '0';
-  const minPrice = priceValues.length ? Math.min(...priceValues).toFixed(3) : '0';
-  const maxPrice = priceValues.length ? Math.max(...priceValues).toFixed(3) : '0';
-  const totalPages = Math.ceil(prices.length / pageSize);
-  const paginatedPrices = prices.slice((page - 1) * pageSize, page * pageSize);
-  const lineData = useMemo(() => {
-    const chartData = prices.slice(0, 50).reverse();
-    return {
-      labels: chartData.map(item => item.period),
-      datasets: [
-        {
-          label: 'Price ($/GAL)',
-          data: chartData.map(item => parseFloat(String(item.value))),
-          borderColor: '#667eea',
-          backgroundColor: 'rgba(102, 126, 234, 0.1)',
-          tension: 0.4,
-        },
-      ],
-    };
-  }, [prices]);
-  const chartOptions = useMemo(() => ({
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        display: true,
-        position: 'top' as const,
-      },
-    },
-    scales: {
-      x: {
-        display: true,
-      },
-      y: {
-        display: true,
-      },
-    },
-  }), []);
-  const areaCoordinates: { [key: string]: [number, number] } = {
-    'East Coast': [38.9072, -77.0369],
-    'Midwest': [41.8781, -87.6298],
-    'Gulf Coast': [29.7604, -95.3698],
-    'Rocky Mountain': [39.7392, -104.9903],
-    'West Coast': [34.0522, -118.2437],
-    'U.S.': [39.8283, -98.5795],
-    'New England': [42.3601, -71.0589],
-    'Central Atlantic': [40.7128, -74.0060],
-    'Lower Atlantic': [33.7490, -84.3880],
-  };
-  const pricesByArea = prices.reduce((acc, price) => {
-    const area = price['area-name'];
-    if (!acc[area]) {
-      acc[area] = [];
-    }
-    acc[area].push(price);
-    return acc;
-  }, {} as { [key: string]: PriceItem[] });
-
-  // Effects
-  useEffect(() => {
-    const savedUser = localStorage.getItem('user');
-    if (savedUser) {
-      setUser(JSON.parse(savedUser));
-    }
-  }, []);
-
-  useEffect(() => {
-    if (user) {
-      localStorage.setItem('user', JSON.stringify(user));
-    } else {
-      localStorage.removeItem('user');
-      localStorage.removeItem('token');
-    }
-  }, [user]);
-
-  const loadData = useCallback(async () => {
-    if (!user) return;
-    setLoading(true);
-    try {
-      try {
-        const pricesDataRaw = await apiClient.getPrices();
-        type PricesApiResponse = { response?: { data?: PriceItem[] }, data?: PriceItem[] };
-        const pricesData = pricesDataRaw as PricesApiResponse;
-        let apiData: PriceItem[] = [];
-        if (pricesData?.response?.data) {
-          apiData = pricesData.response.data || [];
-        } else if (pricesData?.data) {
-          apiData = pricesData.data || [];
-        }
-        setPrices(apiData);
-      } catch (error) {
-        console.error('Failed to load prices:', error);
-        setPrices([]);
-      }
-      try {
-        const alertsData = await apiClient.getAlerts();
-        setAlerts(alertsData);
-      } catch (error) {
-        console.error('Failed to load alerts:', error);
-        setAlerts([]);
-      }
-      try {
-        const ordersData = await apiClient.getOrders();
-        setOrders(ordersData);
-      } catch (error) {
-        console.error('Failed to load orders:', error);
-        setOrders([]);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [user]);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  // Handlers
-  const handleLogout = () => {
-    apiClient.setToken(null);
-    setUser(null);
-  };
-  const handleCreateAlert = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      await apiClient.createAlert(alertForm.product, alertForm.area, parseFloat(alertForm.threshold));
-      setAlertForm({ product: 'Diesel', area: '', threshold: '' });
-      loadData();
-    } catch (error: any) {
-      alert(error.message);
-    }
-  };
-  const handleCreateOrder = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      await apiClient.createOrder(
-        orderForm.product,
-        orderForm.area,
-        parseInt(orderForm.quantity),
-        parseFloat(orderForm.targetPrice)
-      );
-      setOrderForm({ product: 'Diesel', area: '', quantity: '', targetPrice: '' });
-      loadData();
-    } catch (error: any) {
-      alert(error.message);
-    }
-  };
-
-  // Conditional rendering
-  if (!user) {
-    return <AuthModal onSuccess={setUser} />;
-  }
-  if (loading) {
-    return (
-      <div style={{ ...styles.appBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ color: '#fff', fontSize: '1.5rem' }}>Loading...</div>
       </div>
     );
   }
+  // Defensive: fallback for empty or malformed data
+  if (!Array.isArray(prices) || prices.length === 0) {
+    return <div>No price data available.</div>;
+  }
 
+  // Pagination logic
+  const totalPages = Math.ceil(prices.length / pageSize);
+  const paginatedPrices = prices.slice((page - 1) * pageSize, page * pageSize);
+
+  // Chart data (show last 50 prices)
+  const chartData = prices.slice(0, 50).reverse();
+  const lineData = {
+    labels: chartData.map((item) => item?.period ?? ''),
+    datasets: [
+      {
+        label: 'Price ($/GAL)',
+        data: chartData.map((item) => Number(item?.value ?? 0)),
+        borderColor: '#007bff',
+        backgroundColor: 'rgba(0,123,255,0.1)',
+        tension: 0.2,
+        pointRadius: 2,
+      },
+    ],
+  };
+  const lineOptions = {
+    responsive: true,
+    plugins: {
+      legend: { display: true, position: 'top' as const },
+      title: { display: true, text: 'Fuel Price Trend (Last 50 Weeks)' },
+    },
+    scales: {
+      x: { title: { display: true, text: 'Date' } },
+      y: { title: { display: true, text: 'Price ($/GAL)' } },
+    },
+  };
+
+  // Summary stats (defensive, declared only once)
+  let latest: any = { value: '-', period: '-', 'area-name': '-' };
+  let minPrice: string | number = '-';
+  let maxPrice: string | number = '-';
+  let avgPrice: string | number = '-';
+  if (Array.isArray(prices) && prices.length > 0) {
+    latest = prices[0];
+    minPrice = Math.min(...prices.map((p) => Number(p?.value ?? 0)));
+    maxPrice = Math.max(...prices.map((p) => Number(p?.value ?? 0)));
+    avgPrice = (
+      prices.reduce((sum, p) => sum + Number(p?.value ?? 0), 0) / prices.length
+    ).toFixed(3);
+  }
   // ...existing code...
+
   return (
-    <div style={styles.appBg}>
-      {/* ...existing dashboard UI... */}
+    <div style={styles.appBg as React.CSSProperties}>
+      <header style={styles.header as React.CSSProperties}>
+        Oil Price Tracker Dashboard
+        {user && (
+          <div style={{ position: 'absolute', right: 30, top: 30, fontSize: 16, color: '#fff', fontWeight: 700 }}>
+            {user.email} ({user.role})
+            <button style={{ marginLeft: 16, background: '#d32f2f', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 14px', fontWeight: 700, cursor: 'pointer' }} onClick={() => { setUser(null); setShowAuth(true); }}>Logout</button>
+          </div>
+        )}
+      </header>
+      <main style={styles.root as React.CSSProperties}>
+        {/* Price Alert Form */}
+        <div style={{ marginBottom: '2.5rem', background: '#fff', borderRadius: 12, padding: '1.5rem', boxShadow: '0 2px 8px #0001', maxWidth: 500, marginLeft: 'auto', marginRight: 'auto' }}>
+          <h3 style={{ color: '#1976d2', fontWeight: 700, fontSize: 20, marginBottom: 12 }}>Set Price Alert</h3>
+          <form
+            onSubmit={async e => {
+              e.preventDefault();
+              const alert = {
+                email: user.email,
+                role: user.role,
+                product: alertForm.product,
+                area: alertForm.area,
+                threshold: alertForm.threshold,
+              };
+              setAlertLoading(true);
+              setAlertError(null);
+              try {
+                const res = await fetch('/api/alerts', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(alert),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.message || 'Failed to set alert');
+                setAlertSuccess('Alert saved!');
+              } catch (err: any) {
+                setAlertError(err.message);
+              } finally {
+                setAlertLoading(false);
+              }
+            }}
+          >
+            <select
+              value={alertForm.product}
+              style={{ width: '100%', padding: 10, marginBottom: 12, borderRadius: 8, border: '1px solid #b0bec5', fontSize: 16 }}
+              onChange={e => setAlertForm(f => ({ ...f, product: e.target.value }))}
+            >
+              <option value="Diesel">Diesel</option>
+              <option value="Gasoline">Gasoline</option>
+            </select>
+            <input
+              type="text"
+              placeholder="Area (e.g. Midwest, National)"
+              value={alertForm.area}
+              required
+              style={{ width: '100%', padding: 10, marginBottom: 12, borderRadius: 8, border: '1px solid #b0bec5', fontSize: 16 }}
+              onChange={e => setAlertForm(f => ({ ...f, area: e.target.value }))}
+            />
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              placeholder="Price threshold ($/GAL)"
+              value={alertForm.threshold}
+              required
+              style={{ width: '100%', padding: 10, marginBottom: 12, borderRadius: 8, border: '1px solid #b0bec5', fontSize: 16 }}
+              onChange={e => setAlertForm(f => ({ ...f, threshold: e.target.value }))}
+            />
+            {alertError && <div style={{ color: 'red', marginBottom: 10 }}>{alertError}</div>}
+            {alertSuccess && <div style={{ color: 'green', marginBottom: 10 }}>{alertSuccess}</div>}
+            <button
+              type="submit"
+              disabled={alertLoading}
+              style={{ ...styles.pageBtn, width: '100%' }}
+            >
+              {alertLoading ? 'Saving...' : 'Set Alert'}
+            </button>
+          </form>
+        </div>
+        {/* Automated Order Form */}
+        <div style={{ marginBottom: '2.5rem', background: '#fff', borderRadius: 12, padding: '1.5rem', boxShadow: '0 2px 8px #0001', maxWidth: 500, marginLeft: 'auto', marginRight: 'auto' }}>
+          <h3 style={{ color: '#1976d2', fontWeight: 700, fontSize: 20, marginBottom: 12 }}>Automated Order Placement</h3>
+          <form
+            onSubmit={async e => {
+              e.preventDefault();
+              const order = {
+                email: user.email,
+                role: user.role,
+                product: orderForm.product,
+                area: orderForm.area,
+                quantity: orderForm.quantity,
+                targetPrice: orderForm.targetPrice,
+              };
+              setOrderLoading(true);
+              setOrderError(null);
+              try {
+                const res = await fetch('/api/orders', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(order),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.message || 'Failed to place order');
+                setOrderSuccess('Order setup successful! You will be notified and charged when price hits your target.');
+              } catch (err: any) {
+                setOrderError(err.message);
+              } finally {
+                setOrderLoading(false);
+              }
+            }}
+          >
+            <select
+              value={orderForm.product}
+              style={{ width: '100%', padding: 10, marginBottom: 12, borderRadius: 8, border: '1px solid #b0bec5', fontSize: 16 }}
+              onChange={e => setOrderForm(f => ({ ...f, product: e.target.value }))}
+            >
+              <option value="Diesel">Diesel</option>
+              <option value="Gasoline">Gasoline</option>
+            </select>
+            <input
+              type="text"
+              placeholder="Area (e.g. Midwest, National)"
+              value={orderForm.area}
+              required
+              style={{ width: '100%', padding: 10, marginBottom: 12, borderRadius: 8, border: '1px solid #b0bec5', fontSize: 16 }}
+              onChange={e => setOrderForm(f => ({ ...f, area: e.target.value }))}
+            />
+            <input
+              type="number"
+              min="1"
+              step="1"
+              placeholder="Quantity (gallons)"
+              value={orderForm.quantity}
+              required
+              style={{ width: '100%', padding: 10, marginBottom: 12, borderRadius: 8, border: '1px solid #b0bec5', fontSize: 16 }}
+              onChange={e => setOrderForm(f => ({ ...f, quantity: e.target.value }))}
+            />
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              placeholder="Target price ($/GAL)"
+              value={orderForm.targetPrice}
+              required
+              style={{ width: '100%', padding: 10, marginBottom: 12, borderRadius: 8, border: '1px solid #b0bec5', fontSize: 16 }}
+              onChange={e => setOrderForm(f => ({ ...f, targetPrice: e.target.value }))}
+            />
+            {orderError && <div style={{ color: 'red', marginBottom: 10 }}>{orderError}</div>}
+            {orderSuccess && <div style={{ color: 'green', marginBottom: 10 }}>{orderSuccess}</div>}
+            <button
+              type="submit"
+              disabled={orderLoading}
+              style={{ ...styles.pageBtn, width: '100%' }}
+            >
+              {orderLoading ? 'Placing...' : 'Set Up Automated Order'}
+            </button>
+          </form>
+        </div>
+        {/* ...existing code... */}
+        <div style={styles.summaryRow as React.CSSProperties}>
+          <div style={styles.card as React.CSSProperties}>
+            <div style={{ ...styles.cardTitle, color: '#388e3c' }}>Latest Price</div>
+            <div style={styles.cardValue}>{latest.value} $/GAL</div>
+            <div style={styles.cardSub}>{latest.period} ({latest['area-name']})</div>
+          </div>
+          <div style={styles.card as React.CSSProperties}>
+            <div style={styles.cardTitle}>Average Price</div>
+            <div style={styles.cardValue}>{avgPrice} $/GAL</div>
+          </div>
+          <div style={styles.card as React.CSSProperties}>
+            <div style={{ ...styles.cardTitle, color: '#d32f2f' }}>Min/Max</div>
+            <div style={{ fontSize: 20, fontWeight: 700 }}>Min: <span style={{ color: '#388e3c' }}>{minPrice}</span> / Max: <span style={{ color: '#d32f2f' }}>{maxPrice}</span></div>
+          </div>
+        </div>
+        <div style={styles.chartSection as React.CSSProperties}>
+          <Line data={lineData} options={lineOptions} />
+        </div>
+        <div style={styles.tableHeading as React.CSSProperties}>Fuel Prices Table</div>
+        <table style={styles.table as React.CSSProperties}>
+          <thead>
+            <tr>
+              <th style={styles.th as React.CSSProperties}>Date</th>
+              <th style={styles.th as React.CSSProperties}>Area</th>
+              <th style={styles.th as React.CSSProperties}>Product</th>
+              <th style={styles.th as React.CSSProperties}>Price ($/GAL)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {paginatedPrices.map((item, idx) => (
+              <tr key={idx} style={idx % 2 === 0 ? styles.trEven : styles.trOdd}>
+                <td style={styles.td as React.CSSProperties}>{item.period}</td>
+                <td style={styles.td as React.CSSProperties}>{item['area-name']}</td>
+                <td style={styles.td as React.CSSProperties}>{item['product-name']}</td>
+                <td style={{ ...(styles.td as React.CSSProperties), fontWeight: 700 }}>{item.value}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div style={styles.pagination as React.CSSProperties}>
+          <button
+            onClick={() => setPage(page - 1)}
+            disabled={page === 1}
+            style={{
+              ...(styles.pageBtn as React.CSSProperties),
+              ...(page === 1 ? (styles.pageBtnDisabled as React.CSSProperties) : {}),
+            }}
+          >
+            Previous
+          </button>
+          <span style={styles.pageInfo as React.CSSProperties}>Page {page} of {totalPages}</span>
+          <button
+            onClick={() => setPage(page + 1)}
+            disabled={page === totalPages}
+            style={{
+              ...(styles.pageBtn as React.CSSProperties),
+              ...(page === totalPages ? (styles.pageBtnDisabled as React.CSSProperties) : {}),
+            }}
+          >
+            Next
+          </button>
+        </div>
+      </main>
     </div>
+  // ...existing code...
   );
 };
 
