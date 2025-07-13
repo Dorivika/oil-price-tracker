@@ -27,6 +27,8 @@ __pycache__/
 .venv/
 env/
 venv/
+python_backend/.env
+python_backend/__pycache__/
 
 # Editor/IDE
 .vscode/
