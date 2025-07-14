@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getPrices } from './api';
+import { getPrices, setAuthToken, clearAuthToken } from './api';
 import { Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -189,12 +189,12 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     if (!user) return;
     getPrices()
-      .then(res => {
+      .then((res: any) => {
         // ...existing code...
         let apiData = [];
-        if (Array.isArray(res.data?.response?.data)) {
+        if (res.data && typeof res.data === 'object' && !Array.isArray(res.data) && res.data.response && Array.isArray(res.data.response.data)) {
           apiData = res.data.response.data;
-        } else if (Array.isArray(res.data?.data)) {
+        } else if (res.data && typeof res.data === 'object' && !Array.isArray(res.data) && Array.isArray(res.data.data)) {
           apiData = res.data.data;
         } else if (Array.isArray(res.data)) {
           apiData = res.data;
@@ -233,6 +233,7 @@ const Dashboard: React.FC = () => {
                 });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.message || 'Auth failed');
+                setAuthToken(data.access_token);
                 setUser(data.user);
                 setShowAuth(false);
               } catch (err: any) {
@@ -348,7 +349,7 @@ const Dashboard: React.FC = () => {
         {user && (
           <div style={{ position: 'absolute', right: 30, top: 30, fontSize: 16, color: '#fff', fontWeight: 700 }}>
             {user.email} ({user.role})
-            <button style={{ marginLeft: 16, background: '#d32f2f', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 14px', fontWeight: 700, cursor: 'pointer' }} onClick={() => { setUser(null); setShowAuth(true); }}>Logout</button>
+            <button style={{ marginLeft: 16, background: '#d32f2f', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 14px', fontWeight: 700, cursor: 'pointer' }} onClick={() => { clearAuthToken(); setUser(null); setShowAuth(true); }}>Logout</button>
           </div>
         )}
       </header>
