@@ -2,25 +2,27 @@ from fastapi import FastAPI, HTTPException, Depends, status, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, Field, validator
-from motor.motor_asyncio import AsyncIOMotorClient
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, update, delete
 import os
 import stripe
 import httpx
 from typing import Optional, List
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
-from bson import ObjectId
 from dotenv import load_dotenv
+from database import get_db, engine, Base, User, PriceAlert, Order
 
 # --- Load .env ---
 load_dotenv()
 # --- Config ---
-MONGO_URI = os.getenv('MONGO_URI', 'mongodb://127.0.0.1:27017/oil_price_tracker')
+SUPABASE_PASSWORD = os.getenv('SUPABASE_PASSWORD', 'A0000000l123')
+DATABASE_URL = os.getenv('DATABASE_URL', f'postgresql+asyncpg://postgres:{SUPABASE_PASSWORD}@db.uatnbrfhdgpljsqcezlr.supabase.co:5432/postgres')
 JWT_SECRET = os.getenv('JWT_SECRET', 'supersecret')
 STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY', 'sk_test')
 EIA_API_KEY = os.getenv('EIA_API_KEY', 'G19nzdqrKjjAkYvnZt4KuKesf5eti3AhoHE7NSyR')
@@ -31,25 +33,22 @@ ALLOWED_ORIGINS = os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000,http://loc
 
 stripe.api_key = STRIPE_SECRET_KEY
 
-# --- Database ---
-client = AsyncIOMotorClient(MONGO_URI)
-db = client.oil_price_tracker
-
 # --- Lifespan ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
+    # Startup - Create tables
     try:
-        await client.admin.command('ping')
-        print("✅ Successfully connected to MongoDB!")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        print("Successfully connected to database and created tables!")
     except Exception as e:
-        print(f"❌ Failed to connect to MongoDB: {e}")
+        print(f"Failed to connect to database: {e}")
         raise
     
     yield
     
     # Shutdown
-    client.close()
+    await engine.dispose()
 
 # --- App ---
 app = FastAPI(lifespan=lifespan)
@@ -69,7 +68,7 @@ app.add_middleware(
 )
 
 # Security
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 # --- Models ---
@@ -139,7 +138,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, JWT_SECRET, algorithm=ALGORITHM)
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
+async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -152,12 +151,17 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
-    # Ensure ObjectId for MongoDB
+    
+    # Query user from PostgreSQL
     try:
-        user_obj_id = ObjectId(user_id)
-    except Exception:
+        user_id_int = int(user_id)
+    except ValueError:
         raise credentials_exception
-    user = await db.users.find_one({"_id": user_obj_id})
+        
+    stmt = select(User).where(User.id == user_id_int)
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
+    
     if not user:
         raise credentials_exception
     return user
@@ -165,83 +169,98 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
 # --- Auth Endpoints ---
 @app.post('/auth/register', response_model=UserOut)
 @limiter.limit("5/minute")
-async def register(request: Request, user: UserIn):
-    # Check if email already exists
-    if await db.users.find_one({"email": user.email}):
-        raise HTTPException(status_code=400, detail="Email already registered")
-    
-    # Create user
-    user_doc = {
-        "name": user.name,
-        "email": user.email,
-        "password": get_password_hash(user.password),
-        "role": user.role,
-        "created_at": datetime.utcnow()
-    }
-    
-    result = await db.users.insert_one(user_doc)
-    
-    return UserOut(
-        id=str(result.inserted_id),
-        name=user.name,
-        email=user.email,
-        role=user.role
-    )
+async def register(request: Request, user: UserIn, db: AsyncSession = Depends(get_db)):
+    try:
+        # Check if email already exists
+        stmt = select(User).where(User.email == user.email)
+        result = await db.execute(stmt)
+        existing_user = result.scalar_one_or_none()
+        
+        if existing_user:
+            raise HTTPException(status_code=400, detail="Email already registered")
+        
+        # Create user
+        new_user = User(
+            name=user.name,
+            email=user.email,
+            password=get_password_hash(user.password),
+            role=user.role
+        )
+        
+        db.add(new_user)
+        await db.commit()
+        await db.refresh(new_user)
+        
+        return UserOut(
+            id=str(new_user.id),
+            name=new_user.name,
+            email=new_user.email,
+            role=new_user.role
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Registration error: {e}")
+        raise HTTPException(status_code=500, detail="Registration failed")
 
 @app.post('/auth/login', response_model=Token)
 @limiter.limit("10/minute")
-async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
+async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
     # OAuth2PasswordRequestForm expects username field, but we use email
-    user = await db.users.find_one({"email": form_data.username})
+    stmt = select(User).where(User.email == form_data.username)
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
     
-    if not user or not verify_password(form_data.password, user['password']):
+    if not user or not verify_password(form_data.password, user.password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password"
         )
     
-    access_token = create_access_token({"user_id": str(user['_id'])})
+    access_token = create_access_token({"user_id": str(user.id)})
     
     return Token(
         access_token=access_token,
         token_type="bearer",
         user=UserOut(
-            id=str(user['_id']),
-            name=user['name'],
-            email=user['email'],
-            role=user['role']
+            id=str(user.id),
+            name=user.name,
+            email=user.email,
+            role=user.role
         )
     )
 
 # Alternative login endpoint for JSON body (for frontend compatibility)
 @app.post('/auth/login/json', response_model=Token)
 @limiter.limit("10/minute")
-async def login_json(request: Request, login_data: LoginRequest):
-    user = await db.users.find_one({"email": login_data.email})
+async def login_json(request: Request, login_data: LoginRequest, db: AsyncSession = Depends(get_db)):
+    stmt = select(User).where(User.email == login_data.email)
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
     
-    if not user or not verify_password(login_data.password, user['password']):
+    if not user or not verify_password(login_data.password, user.password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password"
         )
     
-    access_token = create_access_token({"user_id": str(user['_id'])})
+    access_token = create_access_token({"user_id": str(user.id)})
     
     return Token(
         access_token=access_token,
         token_type="bearer",
         user=UserOut(
-            id=str(user['_id']),
-            name=user['name'],
-            email=user['email'],
-            role=user['role']
+            id=str(user.id),
+            name=user.name,
+            email=user.email,
+            role=user.role
         )
     )
 
 # --- Price Endpoint ---
 @app.get('/prices')
 @limiter.limit("30/minute")
-async def get_prices(request: Request, current_user: dict = Depends(get_current_user)):
+async def get_prices(request: Request, current_user: User = Depends(get_current_user)):
     try:
         url = f"https://api.eia.gov/v2/petroleum/pri/gnd/data/?api_key={EIA_API_KEY}&frequency=weekly&data[0]=value&sort[0][column]=period&sort[0][direction]=desc&length=5000"
         
@@ -257,87 +276,107 @@ async def get_prices(request: Request, current_user: dict = Depends(get_current_
 
 # --- Alerts ---
 @app.post('/alerts', response_model=AlertOut)
-async def create_alert(alert: AlertIn, current_user: dict = Depends(get_current_user)):
-    alert_doc = {
-        **alert.dict(),
-        "user_id": str(current_user['_id']),
-        "created_at": datetime.utcnow(),
-        "active": True
-    }
+async def create_alert(alert: AlertIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    new_alert = PriceAlert(
+        user_id=current_user.id,
+        product=alert.product,
+        area=alert.area,
+        threshold=alert.threshold,
+        active=True
+    )
     
-    result = await db.pricealerts.insert_one(alert_doc)
+    db.add(new_alert)
+    await db.commit()
+    await db.refresh(new_alert)
     
     return AlertOut(
-        id=str(result.inserted_id),
-        **alert.dict(),
-        created_at=alert_doc["created_at"]
+        id=str(new_alert.id),
+        product=new_alert.product,
+        area=new_alert.area,
+        threshold=new_alert.threshold,
+        created_at=new_alert.created_at
     )
 
 @app.get('/alerts', response_model=List[AlertOut])
-async def get_alerts(current_user: dict = Depends(get_current_user)):
-    alerts = await db.pricealerts.find(
-        {"user_id": str(current_user['_id']), "active": True}
-    ).to_list(100)
+async def get_alerts(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    stmt = select(PriceAlert).where(PriceAlert.user_id == current_user.id, PriceAlert.active == True)
+    result = await db.execute(stmt)
+    alerts = result.scalars().all()
     
     return [
         AlertOut(
-            id=str(alert['_id']),
-            product=alert['product'],
-            area=alert['area'],
-            threshold=alert['threshold'],
-            created_at=alert['created_at']
+            id=str(alert.id),
+            product=alert.product,
+            area=alert.area,
+            threshold=alert.threshold,
+            created_at=alert.created_at
         )
         for alert in alerts
     ]
 
 @app.delete('/alerts/{alert_id}')
-async def delete_alert(alert_id: str, current_user: dict = Depends(get_current_user)):
+async def delete_alert(alert_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     try:
-        obj_id = ObjectId(alert_id)
-    except Exception:
+        alert_id_int = int(alert_id)
+    except ValueError:
         raise HTTPException(status_code=400, detail="Invalid alert ID")
-    result = await db.pricealerts.update_one(
-        {"_id": obj_id, "user_id": str(current_user['_id'])},
-        {"$set": {"active": False}}
-    )
-    if result.modified_count == 0:
+    
+    stmt = update(PriceAlert).where(
+        PriceAlert.id == alert_id_int, 
+        PriceAlert.user_id == current_user.id
+    ).values(active=False)
+    
+    result = await db.execute(stmt)
+    await db.commit()
+    
+    if result.rowcount == 0:
         raise HTTPException(status_code=404, detail="Alert not found")
     return {"message": "Alert deleted"}
 
 # --- Orders ---
 @app.post('/orders', response_model=OrderOut)
-async def place_order(order: OrderIn, current_user: dict = Depends(get_current_user)):
-    order_doc = {
-        **order.dict(),
-        "user_id": str(current_user['_id']),
-        "status": "pending",
-        "created_at": datetime.utcnow()
-    }
+async def place_order(order: OrderIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    new_order = Order(
+        user_id=current_user.id,
+        product=order.product,
+        area=order.area,
+        quantity=order.quantity,
+        target_price=order.target_price,
+        location=order.location,
+        status="pending"
+    )
     
-    result = await db.orders.insert_one(order_doc)
+    db.add(new_order)
+    await db.commit()
+    await db.refresh(new_order)
     
     return OrderOut(
-        id=str(result.inserted_id),
-        **order.dict(),
-        status="pending",
-        created_at=order_doc["created_at"]
+        id=str(new_order.id),
+        product=new_order.product,
+        area=new_order.area,
+        quantity=new_order.quantity,
+        target_price=new_order.target_price,
+        location=new_order.location,
+        status=new_order.status,
+        created_at=new_order.created_at
     )
 
 @app.get('/orders', response_model=List[OrderOut])
-async def get_orders(current_user: dict = Depends(get_current_user)):
-    orders = await db.orders.find(
-        {"user_id": str(current_user['_id'])}
-    ).sort("created_at", -1).to_list(100)
+async def get_orders(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    stmt = select(Order).where(Order.user_id == current_user.id).order_by(Order.created_at.desc())
+    result = await db.execute(stmt)
+    orders = result.scalars().all()
+    
     return [
         OrderOut(
-            id=str(order['_id']),
-            product=order['product'],
-            area=order['area'],
-            quantity=order['quantity'],
-            target_price=order['target_price'],
-            location=order.get('location'),
-            status=order['status'],
-            created_at=order['created_at']
+            id=str(order.id),
+            product=order.product,
+            area=order.area,
+            quantity=order.quantity,
+            target_price=order.target_price,
+            location=order.location,
+            status=order.status,
+            created_at=order.created_at
         )
         for order in orders
     ]
@@ -346,15 +385,15 @@ async def get_orders(current_user: dict = Depends(get_current_user)):
 @app.post('/payments/create-intent')
 async def create_payment_intent(
     payment_request: PaymentIntentRequest,
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     try:
         intent = stripe.PaymentIntent.create(
             amount=payment_request.amount,
             currency='usd',
             metadata={
-                'user_id': str(current_user['_id']),
-                'user_email': current_user['email']
+                'user_id': str(current_user.id),
+                'user_email': current_user.email
             }
         )
         
@@ -366,8 +405,9 @@ async def create_payment_intent(
 @app.get('/health')
 async def health_check():
     try:
-        # Check MongoDB connection
-        await client.admin.command('ping')
+        # Check PostgreSQL connection
+        async with engine.begin() as conn:
+            await conn.execute(select(1))
         return {"status": "healthy", "database": "connected"}
     except Exception:
         raise HTTPException(status_code=503, detail="Database unavailable")

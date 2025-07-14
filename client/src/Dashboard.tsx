@@ -174,7 +174,7 @@ const Dashboard: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [user, setUser] = useState<any>(null);
-  const [form, setForm] = useState({ email: '', password: '', role: 'trucker' });
+  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'trucker' });
   // Price alert state (moved up)
   const [alertForm, setAlertForm] = useState({ product: 'Diesel', area: '', threshold: '' });
   const [alertLoading, setAlertLoading] = useState(false);
@@ -245,6 +245,16 @@ const Dashboard: React.FC = () => {
               }
             }}
           >
+            {authMode === 'register' && (
+              <input
+                type="text"
+                placeholder="Full Name"
+                value={form.name}
+                required
+                style={{ width: '100%', padding: 10, marginBottom: 12, borderRadius: 8, border: '1px solid #b0bec5', fontSize: 16 }}
+                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+              />
+            )}
             <input
               type="email"
               placeholder="Email"
@@ -261,14 +271,16 @@ const Dashboard: React.FC = () => {
               style={{ width: '100%', padding: 10, marginBottom: 12, borderRadius: 8, border: '1px solid #b0bec5', fontSize: 16 }}
               onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
             />
-            <select
-              value={form.role}
-              style={{ width: '100%', padding: 10, marginBottom: 18, borderRadius: 8, border: '1px solid #b0bec5', fontSize: 16 }}
-              onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
-            >
-              <option value="trucker">Trucker</option>
-              <option value="owner">Truck Stop Owner</option>
-            </select>
+            {authMode === 'register' && (
+              <select
+                value={form.role}
+                style={{ width: '100%', padding: 10, marginBottom: 18, borderRadius: 8, border: '1px solid #b0bec5', fontSize: 16 }}
+                onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
+              >
+                <option value="trucker">Trucker</option>
+                <option value="owner">Truck Stop Owner</option>
+              </select>
+            )}
             {authError && <div style={{ color: 'red', marginBottom: 10 }}>{authError}</div>}
             <button
               type="submit"
