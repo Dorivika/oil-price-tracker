@@ -22,8 +22,6 @@ This is a full-stack web app for real-time gas and diesel price tracking and aut
 
 ## Future Fixes & Improvements
 
-- Fix persistent API errors (405/404) for /alerts, /orders endpoints
-- Improve error handling and user feedback in frontend
 - Add password reset and email verification
 - Add user profile management and settings
 - Enhance security (rate limiting, input validation)
