@@ -187,7 +187,11 @@ const Dashboard: React.FC = () => {
   const [orderSuccess, setOrderSuccess] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
     getPrices()
       .then((res: any) => {
         // ...existing code...
@@ -208,8 +212,6 @@ const Dashboard: React.FC = () => {
       });
   }, [user]);
 
-  if (loading) return <div>Loading prices...</div>;
-  if (error) return <div style={{ color: 'red' }}>{error}</div>;
   // Auth modal
   if (showAuth) {
     return (
@@ -225,7 +227,7 @@ const Dashboard: React.FC = () => {
               setAuthLoading(true);
               setAuthError(null);
               try {
-                const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+                const endpoint = authMode === 'login' ? '/api/auth/login/json' : '/api/auth/register';
                 const res = await fetch(endpoint, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
@@ -291,6 +293,9 @@ const Dashboard: React.FC = () => {
       </div>
     );
   }
+
+  if (loading) return <div>Loading prices...</div>;
+  if (error) return <div style={{ color: 'red' }}>{error}</div>;
   // Defensive: fallback for empty or malformed data
   if (!Array.isArray(prices) || prices.length === 0) {
     return <div>No price data available.</div>;
