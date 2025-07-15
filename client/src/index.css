@@ -1,13 +1,41 @@
-/* Global CSS Reset and base styles */
-html, body, #root {
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  font-family: Inter, Segoe UI, Arial, sans-serif;
-  background: linear-gradient(120deg, #e3e8ee 0%, #f8fafc 100%);
-  color: #222;
+@import "tailwindcss";
+
+@theme {
+  --color-background: oklch(100% 0 0);
+  --color-foreground: oklch(9% 0.005 286);
+  --color-card: oklch(100% 0 0);
+  --color-card-foreground: oklch(9% 0.005 286);
+  --color-popover: oklch(100% 0 0);
+  --color-popover-foreground: oklch(9% 0.005 286);
+  --color-primary: oklch(53% 0.17 243);
+  --color-primary-foreground: oklch(98% 0.004 286);
+  --color-secondary: oklch(96% 0.006 286);
+  --color-secondary-foreground: oklch(9% 0.005 286);
+  --color-muted: oklch(96% 0.006 286);
+  --color-muted-foreground: oklch(47% 0.006 286);
+  --color-accent: oklch(96% 0.006 286);
+  --color-accent-foreground: oklch(9% 0.005 286);
+  --color-destructive: oklch(60% 0.15 29);
+  --color-destructive-foreground: oklch(98% 0.004 286);
+  --color-border: oklch(91% 0.006 286);
+  --color-input: oklch(91% 0.006 286);
+  --color-ring: oklch(53% 0.17 243);
+  --radius: 0.5rem;
 }
 
-*, *::before, *::after {
-  box-sizing: border-box;
+@layer base {
+  * {
+    border-color: theme(colors.border);
+  }
+  body {
+    background-color: theme(colors.background);
+    color: theme(colors.foreground);
+  }
+  
+  html, body, #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    font-family: Inter, Segoe UI, Arial, sans-serif;
+  }
 }
