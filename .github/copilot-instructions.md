@@ -1,3 +1,0 @@
-<!-- Use this file to provide workspace-specific custom instructions to Copilot. For more details, visit https://code.visualstudio.com/docs/copilot/copilot-customization#_use-a-githubcopilotinstructionsmd-file -->
-
-This project is a full-stack web app for real-time gas and diesel price tracking and automated buying for truckers and truck stop owners. Use React for the frontend dashboard, Node.js/Express for the backend, and MongoDB for the database. Integrate with EIA API for fuel prices. Include user authentication, price alerts, and logic for automated order placement when price hits user’s target. Add Stripe payment integration for transactions.
