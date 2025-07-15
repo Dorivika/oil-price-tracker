@@ -252,7 +252,13 @@ const Dashboard: React.FC = () => {
     fetchPrices();
   }, [user]);
 
-  // Refresh function - moved before early returns to fix hook order
+  if (loading) return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center">
+      <div className="text-lg">Loading prices...</div>
+    </div>
+  );
+  
+  // Refresh function
   const refreshPrices = useCallback(async () => {
     if (!user) return;
     setLoading(true);
@@ -274,71 +280,6 @@ const Dashboard: React.FC = () => {
       setLoading(false);
     }
   }, [user]);
-
-  // Memoized calculations for better performance - moved before early returns
-  const { paginatedPrices, totalPages, chartData, stats } = useMemo(() => {
-    if (!Array.isArray(prices) || prices.length === 0) {
-      return {
-        paginatedPrices: [],
-        totalPages: 0,
-        chartData: { labels: [], datasets: [] },
-        stats: { latest: { value: '-', period: '-', 'area-name': '-' }, minPrice: '-', maxPrice: '-', avgPrice: '-' }
-      };
-    }
-
-    // Pagination
-    const totalPages = Math.ceil(prices.length / pageSize);
-    const paginatedPrices = prices.slice((page - 1) * pageSize, page * pageSize);
-
-    // Chart data (last 50 prices)
-    const chartPrices = prices.slice(0, 50).reverse();
-    const chartData = {
-      labels: chartPrices.map((item) => item?.period ?? ''),
-      datasets: [{
-        label: 'Price ($/GAL)',
-        data: chartPrices.map((item) => Number(item?.value ?? 0)),
-        borderColor: '#007bff',
-        backgroundColor: 'rgba(0,123,255,0.1)',
-        tension: 0.2,
-        pointRadius: 2,
-      }],
-    };
-
-    // Stats calculation
-    const latest = prices[0];
-    const numericPrices = prices.map((p) => Number(p?.value ?? 0)).filter(p => p > 0);
-    const minPrice = numericPrices.length > 0 ? Math.min(...numericPrices) : '-';
-    const maxPrice = numericPrices.length > 0 ? Math.max(...numericPrices) : '-';
-    const avgPrice = numericPrices.length > 0 
-      ? (numericPrices.reduce((sum, p) => sum + p, 0) / numericPrices.length).toFixed(3)
-      : '-';
-
-    return {
-      paginatedPrices,
-      totalPages,
-      chartData,
-      stats: { latest, minPrice, maxPrice, avgPrice }
-    };
-  }, [prices, page, pageSize]);
-
-  const lineOptions = useMemo(() => ({
-    responsive: true,
-    plugins: {
-      legend: { display: true, position: 'top' as const },
-      title: { display: true, text: 'Fuel Price Trend (Last 50 Weeks)' },
-    },
-    scales: {
-      x: { title: { display: true, text: 'Date' } },
-      y: { title: { display: true, text: 'Price ($/GAL)' } },
-    },
-  }), []);
-
-  // Early returns after all hooks are defined
-  if (loading) return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center">
-      <div className="text-lg">Loading prices...</div>
-    </div>
-  );
 
   if (error && prices.length === 0) return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center">
@@ -521,6 +462,63 @@ const Dashboard: React.FC = () => {
     );
   }
 
+  // Memoized calculations for better performance
+  const { paginatedPrices, totalPages, chartData, stats } = useMemo(() => {
+    if (!Array.isArray(prices) || prices.length === 0) {
+      return {
+        paginatedPrices: [],
+        totalPages: 0,
+        chartData: { labels: [], datasets: [] },
+        stats: { latest: { value: '-', period: '-', 'area-name': '-' }, minPrice: '-', maxPrice: '-', avgPrice: '-' }
+      };
+    }
+
+    // Pagination
+    const totalPages = Math.ceil(prices.length / pageSize);
+    const paginatedPrices = prices.slice((page - 1) * pageSize, page * pageSize);
+
+    // Chart data (last 50 prices)
+    const chartPrices = prices.slice(0, 50).reverse();
+    const chartData = {
+      labels: chartPrices.map((item) => item?.period ?? ''),
+      datasets: [{
+        label: 'Price ($/GAL)',
+        data: chartPrices.map((item) => Number(item?.value ?? 0)),
+        borderColor: '#007bff',
+        backgroundColor: 'rgba(0,123,255,0.1)',
+        tension: 0.2,
+        pointRadius: 2,
+      }],
+    };
+
+    // Stats calculation
+    const latest = prices[0];
+    const numericPrices = prices.map((p) => Number(p?.value ?? 0)).filter(p => p > 0);
+    const minPrice = numericPrices.length > 0 ? Math.min(...numericPrices) : '-';
+    const maxPrice = numericPrices.length > 0 ? Math.max(...numericPrices) : '-';
+    const avgPrice = numericPrices.length > 0 
+      ? (numericPrices.reduce((sum, p) => sum + p, 0) / numericPrices.length).toFixed(3)
+      : '-';
+
+    return {
+      paginatedPrices,
+      totalPages,
+      chartData,
+      stats: { latest, minPrice, maxPrice, avgPrice }
+    };
+  }, [prices, page, pageSize]);
+
+  const lineOptions = useMemo(() => ({
+    responsive: true,
+    plugins: {
+      legend: { display: true, position: 'top' as const },
+      title: { display: true, text: 'Fuel Price Trend (Last 50 Weeks)' },
+    },
+    scales: {
+      x: { title: { display: true, text: 'Date' } },
+      y: { title: { display: true, text: 'Price ($/GAL)' } },
+    },
+  }), []);
   // ...existing code...
 
   return (
@@ -576,7 +574,7 @@ const Dashboard: React.FC = () => {
       <main className="container mx-auto px-6 py-8 space-y-8">
         {/* Error Banner for API issues with cached data */}
         {error && prices.length > 0 && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             className="bg-amber-50 border border-amber-200 rounded-lg p-4"
@@ -586,21 +584,20 @@ const Dashboard: React.FC = () => {
                 <AlertTriangle className="h-4 w-4" />
                 <span className="text-sm font-medium">Using cached data - {error}</span>
               </div>
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 size="sm"
                 onClick={refreshPrices}
                 disabled={loading}
                 className="text-amber-700 border-amber-300 hover:bg-amber-100"
               >
-                <RefreshCw className={`h-3 w-3 mr-1 ${loading ? 'animate-spin' : ''}`} />
+                <RefreshCw className={\} />
                 Retry
               </Button>
             </div>
           </motion.div>
         )}
 
-        {/* Quick Actions Panel */}
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}

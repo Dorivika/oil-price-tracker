@@ -1,17 +1,18 @@
-from fastapi import FastAPI, HTTPException, Depends, status, Request, Body
+from fastapi import FastAPI, HTTPException, Depends, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, EmailStr, Field
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update
 import os
 import stripe
 import httpx
+import asyncio
 from typing import Optional, List
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
@@ -170,109 +171,99 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
 @app.post('/auth/register', response_model=UserOut)
 @limiter.limit("5/minute")
 async def register(request: Request, user: UserIn, db: AsyncSession = Depends(get_db)):
-    try:
-        # Check if email already exists
-        stmt = select(User).where(User.email == user.email)
-        result = await db.execute(stmt)
-        existing_user = result.scalar_one_or_none()
-        
-        if existing_user:
-            raise HTTPException(status_code=400, detail="Email already registered")
-        
-        # Create user
-        new_user = User(
+    # Check if email already exists
+    stmt = select(User).where(User.email == user.email)
+    result = await db.execute(stmt)
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    # Create user
+    new_user = User(
+        name=user.name,
+        email=user.email,
+        password=get_password_hash(user.password),
+        role=user.role
+    )
+    
+    db.add(new_user)
+    await db.commit()
+    await db.refresh(new_user)
+    
+    return UserOut(
+        id=str(new_user.id),
+        name=new_user.name,
+        email=new_user.email,
+        role=new_user.role
+    )
+
+# --- Helper function to create login response ---
+def create_login_response(user: User) -> Token:
+    access_token = create_access_token({"user_id": str(user.id)})
+    return Token(
+        access_token=access_token,
+        token_type="bearer",
+        user=UserOut(
+            id=str(user.id),
             name=user.name,
             email=user.email,
-            password=get_password_hash(user.password),
             role=user.role
         )
-        
-        db.add(new_user)
-        await db.commit()
-        await db.refresh(new_user)
-        
-        return UserOut(
-            id=str(new_user.id),
-            name=new_user.name,
-            email=new_user.email,
-            role=new_user.role
+    )
+
+async def authenticate_user(email: str, password: str, db: AsyncSession) -> User:
+    stmt = select(User).where(User.email == email)
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
+    
+    if not user or not verify_password(password, user.password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password"
         )
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Registration error: {e}")
-        raise HTTPException(status_code=500, detail="Registration failed")
+    return user
 
 @app.post('/auth/login', response_model=Token)
 @limiter.limit("10/minute")
 async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
-    # OAuth2PasswordRequestForm expects username field, but we use email
-    stmt = select(User).where(User.email == form_data.username)
-    result = await db.execute(stmt)
-    user = result.scalar_one_or_none()
-    
-    if not user or not verify_password(form_data.password, user.password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password"
-        )
-    
-    access_token = create_access_token({"user_id": str(user.id)})
-    
-    return Token(
-        access_token=access_token,
-        token_type="bearer",
-        user=UserOut(
-            id=str(user.id),
-            name=user.name,
-            email=user.email,
-            role=user.role
-        )
-    )
+    user = await authenticate_user(form_data.username, form_data.password, db)
+    return create_login_response(user)
 
-# Alternative login endpoint for JSON body (for frontend compatibility)
 @app.post('/auth/login/json', response_model=Token)
 @limiter.limit("10/minute")
 async def login_json(request: Request, login_data: LoginRequest, db: AsyncSession = Depends(get_db)):
-    stmt = select(User).where(User.email == login_data.email)
-    result = await db.execute(stmt)
-    user = result.scalar_one_or_none()
-    
-    if not user or not verify_password(login_data.password, user.password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password"
-        )
-    
-    access_token = create_access_token({"user_id": str(user.id)})
-    
-    return Token(
-        access_token=access_token,
-        token_type="bearer",
-        user=UserOut(
-            id=str(user.id),
-            name=user.name,
-            email=user.email,
-            role=user.role
-        )
-    )
+    user = await authenticate_user(login_data.email, login_data.password, db)
+    return create_login_response(user)
 
 # --- Price Endpoint ---
 @app.get('/prices')
 @limiter.limit("30/minute")
 async def get_prices(request: Request, current_user: User = Depends(get_current_user)):
     try:
-        url = f"https://api.eia.gov/v2/petroleum/pri/gnd/data/?api_key={EIA_API_KEY}&frequency=weekly&data[0]=value&sort[0][column]=period&sort[0][direction]=desc&length=5000"
+        url = f"https://api.eia.gov/v2/petroleum/pri/gnd/data/?api_key={EIA_API_KEY}&frequency=weekly&data[0]=value&sort[0][column]=period&sort[0][direction]=desc&length=1000"
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            
-        return resp.json()
+        # Retry logic with exponential backoff
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                timeout = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    resp = await client.get(url)
+                    resp.raise_for_status()
+                    return resp.json()
+            except (httpx.HTTPStatusError, httpx.RequestError) as e:
+                if attempt == max_retries - 1:
+                    raise e
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                
     except httpx.HTTPStatusError as e:
+        if e.response.status_code == 429:
+            raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again later.")
         raise HTTPException(status_code=e.response.status_code, detail="Failed to fetch prices from EIA")
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail="EIA service temporarily unavailable. Please try again in a few minutes.")
+    except Exception as e:
+        print(f"Unexpected error in get_prices: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 # --- Alerts ---
 @app.post('/alerts', response_model=AlertOut)
@@ -303,16 +294,13 @@ async def get_alerts(current_user: User = Depends(get_current_user), db: AsyncSe
     result = await db.execute(stmt)
     alerts = result.scalars().all()
     
-    return [
-        AlertOut(
-            id=str(alert.id),
-            product=alert.product,
-            area=alert.area,
-            threshold=alert.threshold,
-            created_at=alert.created_at
-        )
-        for alert in alerts
-    ]
+    return [AlertOut(
+        id=str(alert.id),
+        product=alert.product,
+        area=alert.area,
+        threshold=alert.threshold,
+        created_at=alert.created_at
+    ) for alert in alerts]
 
 @app.delete('/alerts/{alert_id}')
 async def delete_alert(alert_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -367,19 +355,16 @@ async def get_orders(current_user: User = Depends(get_current_user), db: AsyncSe
     result = await db.execute(stmt)
     orders = result.scalars().all()
     
-    return [
-        OrderOut(
-            id=str(order.id),
-            product=order.product,
-            area=order.area,
-            quantity=order.quantity,
-            target_price=order.target_price,
-            location=order.location,
-            status=order.status,
-            created_at=order.created_at
-        )
-        for order in orders
-    ]
+    return [OrderOut(
+        id=str(order.id),
+        product=order.product,
+        area=order.area,
+        quantity=order.quantity,
+        target_price=order.target_price,
+        location=order.location,
+        status=order.status,
+        created_at=order.created_at
+    ) for order in orders]
 
 # --- Stripe Payment Intent ---
 @app.post('/payments/create-intent')
