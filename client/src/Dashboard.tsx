@@ -42,16 +42,38 @@ import {
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
+
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
+
+// Night mode hook
+function useDarkMode() {
+  const [dark, setDark] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('theme') === 'dark' || window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    return false;
+  });
+  useEffect(() => {
+    if (dark) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
+  }, [dark]);
+  return [dark, setDark] as const;
+}
 
 
 const Dashboard: React.FC = () => {
+  const [dark, setDark] = useDarkMode();
   const [prices, setPrices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
   // Auth states
-  const [user, setUser] = useState<{ email: string; role: string } | null>(null);
+  const [user, setUser] = useState<{ name?: string; email: string; role: string } | null>(null);
   const [, setShowAuth] = useState(true);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [authForm, setAuthForm] = useState({ name: '', email: '', password: '', role: 'trucker' });
@@ -65,12 +87,13 @@ const Dashboard: React.FC = () => {
   const [alertSuccess, setAlertSuccess] = useState<string | null>(null);
   
   // Order states
-  const [orderForm, setOrderForm] = useState({ product: '', area: '', quantity: '', targetPrice: '' });
+  const [orderForm, setOrderForm] = useState({ product: '', area: '', quantity: '', targetPrice: '', location: '' });
+  const [orders, setOrders] = useState<any[]>([]);
   const [orderLoading, setOrderLoading] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
   const [orderSuccess, setOrderSuccess] = useState<string | null>(null);
   const [page, setPage] = useState(1);
-  const pageSize = 20;
+  const [pageSize, setPageSize] = useState(20);
 
   // Check for existing auth token on component mount
   useEffect(() => {
@@ -86,7 +109,8 @@ const Dashboard: React.FC = () => {
           });
           
           if (res.ok) {
-            setUser(JSON.parse(userData));
+            const parsed = JSON.parse(userData);
+            setUser(parsed);
             setAuthToken(token);
             setShowAuth(false);
           } else {
@@ -110,9 +134,10 @@ const Dashboard: React.FC = () => {
   // Helper function to store auth data
   const storeAuthData = useCallback((token: string, email: string, role: string) => {
     localStorage.setItem('auth_token', token);
-    localStorage.setItem('user_data', JSON.stringify({ email, role }));
+    const name = authForm.name || '';
+    localStorage.setItem('user_data', JSON.stringify({ name, email, role }));
     setAuthToken(token);
-    setUser({ email, role });
+    setUser({ name, email, role });
     setShowAuth(false);
   }, []);
 
@@ -199,27 +224,60 @@ const Dashboard: React.FC = () => {
   const handleOrderSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
-    
+    // Basic validation
+    if (!orderForm.product || !orderForm.area || !orderForm.quantity || !orderForm.targetPrice || !orderForm.location) {
+      setOrderError('All fields are required.');
+      return;
+    }
+    if (isNaN(Number(orderForm.quantity)) || Number(orderForm.quantity) <= 0) {
+      setOrderError('Quantity must be a positive number.');
+      return;
+    }
+    if (isNaN(Number(orderForm.targetPrice)) || Number(orderForm.targetPrice) <= 0) {
+      setOrderError('Target price must be a positive number.');
+      return;
+    }
     setOrderLoading(true);
     setOrderError(null);
     setOrderSuccess(null);
-    
     try {
       await createOrder({
         product: orderForm.product,
         area: orderForm.area,
         quantity: parseInt(orderForm.quantity),
         target_price: parseFloat(orderForm.targetPrice),
+        location: orderForm.location,
       });
-      
       setOrderSuccess('Order setup successful! You will be notified when price hits your target.');
-      setOrderForm({ product: '', area: '', quantity: '', targetPrice: '' });
+      setOrderForm({ product: '', area: '', quantity: '', targetPrice: '', location: '' });
+      // Refresh order history
+      fetchOrders();
     } catch (err: any) {
       setOrderError(err.message);
     } finally {
       setOrderLoading(false);
     }
   }, [user, orderForm]);
+
+  // Fetch order history for owner
+  const fetchOrders = useCallback(async () => {
+    if (!user || user.role !== 'owner') return;
+    try {
+      const res = await fetch('/api/orders', {
+        headers: { Authorization: `Bearer ${localStorage.getItem('auth_token')}` }
+      });
+      const data = await res.json();
+      setOrders(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setOrders([]);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (user && user.role === 'owner') {
+      fetchOrders();
+    }
+  }, [user, fetchOrders]);
 
   // Fetch prices when user changes
   useEffect(() => {
@@ -368,8 +426,8 @@ const Dashboard: React.FC = () => {
           </div>
           
           {/* Direct Auth Form (not in modal) */}
-          <Card className="w-full max-w-md mx-auto shadow-xl">
-            <CardHeader>
+      <Card className="w-full max-w-md mx-auto shadow-xl bg-card text-card-foreground">
+            <CardHeader className="bg-card text-card-foreground">
               <CardTitle className="text-center flex items-center justify-center gap-2">
                 <div className="p-2 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg">
                   <User className="h-5 w-5 text-white" />
@@ -463,9 +521,9 @@ const Dashboard: React.FC = () => {
                       <SelectTrigger>
                         <SelectValue placeholder="Select your role" />
                       </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="trucker">🚛 Trucker</SelectItem>
-                        <SelectItem value="owner">⛽ Truck Stop Owner</SelectItem>
+                      <SelectContent className="bg-white border border-slate-200 shadow-lg">
+                        <SelectItem value="trucker" className="bg-white hover:bg-slate-50">🚛 Trucker</SelectItem>
+                        <SelectItem value="owner" className="bg-white hover:bg-slate-50">⛽ Truck Stop Owner</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -512,7 +570,39 @@ const Dashboard: React.FC = () => {
     );
   }
 
+
+  // Show 'Coming Soon' for truckers (return early, before any price fetch logic)
+  if (user && user.role === 'trucker') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center">
+        <Card className="max-w-md p-8 text-center shadow-xl bg-card text-card-foreground">
+          <div className="flex flex-col items-center gap-4">
+            <Fuel className="h-12 w-12 text-blue-500 mb-2" />
+            <h2 className="text-3xl font-bold mb-2">Coming Soon</h2>
+            <p className="text-lg text-slate-600 mb-4">The trucker dashboard is under construction.<br />Stay tuned for real-time gas prices, maps, and more!</p>
+            <Button onClick={() => { clearAuthToken(); setUser(null); setShowAuth(true); }} variant="outline" className="mt-2">Logout</Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
   // Defensive: fallback for empty or malformed data
+  // Defensive: fallback for empty or malformed data
+  if (user && user.role === 'trucker') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center">
+        <Card className="max-w-md p-8 text-center shadow-xl bg-card text-card-foreground">
+          <div className="flex flex-col items-center gap-4">
+            <Fuel className="h-12 w-12 text-blue-500 mb-2" />
+            <h2 className="text-3xl font-bold mb-2">Coming Soon</h2>
+            <p className="text-lg text-slate-600 mb-4">The trucker dashboard is under construction.<br />Stay tuned for real-time gas prices, maps, and more!</p>
+            <Button onClick={() => { clearAuthToken(); setUser(null); setShowAuth(true); }} variant="outline" className="mt-2">Logout</Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
   if (!Array.isArray(prices) || prices.length === 0) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center">
@@ -539,36 +629,90 @@ const Dashboard: React.FC = () => {
                 <Fuel className="h-6 w-6 text-white" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent dark:text-foreground">
                   Oil Price Tracker
                 </h1>
-                <p className="text-sm text-slate-600">Real-time fuel analytics dashboard</p>
+                <p className="text-sm text-slate-600 dark:text-slate-300">Real-time fuel analytics dashboard</p>
               </div>
             </div>
-            {user && (
-              <div className="flex items-center gap-4">
-                <Card className="px-4 py-2 shadow-sm border-slate-200/50">
-                  <div className="flex items-center gap-2 text-sm">
-                    <div className="p-1.5 bg-blue-100 rounded-full">
-                      <User className="h-3 w-3 text-blue-600" />
+            <div className="flex items-center gap-4">
+              <button
+                aria-label="Toggle night mode"
+                onClick={() => setDark(d => !d)}
+                className={
+                  `rounded-full p-2 border border-slate-200/50 bg-white/80 dark:bg-slate-800 dark:border-slate-700 transition-colors shadow hover:bg-slate-100 dark:hover:bg-slate-700`
+                }
+                title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+              >
+                {dark ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-yellow-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m8.66-13.66l-.71.71M4.05 19.07l-.71.71M21 12h-1M4 12H3m16.66 5.66l-.71-.71M4.05 4.93l-.71-.71M16 12a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-slate-700" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12.79A9 9 0 1111.21 3a7 7 0 109.79 9.79z" /></svg>
+                )}
+              </button>
+              {user && (
+                <>
+                  <Card className="px-4 py-2 shadow-sm bg-card" style={{ color: '#000' }}>
+                    <div className="flex items-center gap-2 text-sm">
+                      <div className="p-1.5 bg-blue-100 rounded-full">
+                        <User className="h-3 w-3 text-blue-600" />
+                      </div>
+                      <div>
+                        <p className="font-medium" style={{ color: '#000' }}>{user.name || user.email}</p>
+                        <p className="text-xs text-slate-500 capitalize">{user.role}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-medium text-slate-900">{user.email}</p>
-                      <p className="text-xs text-slate-500 capitalize">{user.role}</p>
-                    </div>
-                  </div>
-                </Card>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => { clearAuthToken(); setUser(null); setShowAuth(true); }}
-                  className="flex items-center gap-2 hover:bg-red-50 hover:text-red-600 hover:border-red-200"
-                >
-                  <LogOut className="h-4 w-4" />
-                  Logout
-                </Button>
-              </div>
-            )}
+                  </Card>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => { clearAuthToken(); setUser(null); setShowAuth(true); }}
+                    className="flex items-center gap-2 hover:bg-red-50 hover:text-red-600 hover:border-red-200 dark:hover:bg-red-900/30 dark:hover:text-red-400 dark:hover:border-red-700"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    Logout
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+          {/* Analytics Controls */}
+          <div className="flex flex-wrap gap-4 mt-6 items-center">
+            <div>
+              <label className="text-sm font-medium mr-2">Area:</label>
+              <Select value={alertForm.area} onValueChange={value => setAlertForm(f => ({ ...f, area: value }))}>
+                <SelectTrigger className="min-w-[160px]">
+                  <SelectValue placeholder="East Coast" />
+                </SelectTrigger>
+                <SelectContent className="bg-white border border-slate-200 shadow-lg">
+                  <SelectItem value="East Coast" className="bg-white hover:bg-slate-50">East Coast</SelectItem>
+                  <SelectItem value="National" className="bg-white hover:bg-slate-50">National</SelectItem>
+                  <SelectItem value="Midwest" className="bg-white hover:bg-slate-50">Midwest</SelectItem>
+                  <SelectItem value="California" className="bg-white hover:bg-slate-50">California</SelectItem>
+                  <SelectItem value="Texas" className="bg-white hover:bg-slate-50">Texas</SelectItem>
+                  <SelectItem value="Southeast" className="bg-white hover:bg-slate-50">Southeast</SelectItem>
+                  <SelectItem value="Other" className="bg-white hover:bg-slate-50">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-sm font-medium mr-2">History:</label>
+              <Select value={String(pageSize)} onValueChange={value => setPageSize(Number(value))}>
+                <SelectTrigger className="min-w-[120px]">
+                  <SelectValue placeholder="7 days" />
+                </SelectTrigger>
+                <SelectContent className="bg-white border border-slate-200 shadow-lg">
+                  <SelectItem value="7" className="bg-white hover:bg-slate-50">7 days</SelectItem>
+                  <SelectItem value="30" className="bg-white hover:bg-slate-50">30 days</SelectItem>
+                  <SelectItem value="90" className="bg-white hover:bg-slate-50">90 days</SelectItem>
+                  <SelectItem value="365" className="bg-white hover:bg-slate-50">1 year</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button variant="outline" size="sm" className="flex items-center gap-2">
+              <Download className="h-4 w-4" />
+              Export CSV
+            </Button>
           </div>
         </div>
       </motion.header>
@@ -605,7 +749,6 @@ const Dashboard: React.FC = () => {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.1 }}
-          className="grid md:grid-cols-2 gap-6"
         >
           {/* Price Alert Form */}
           <Card className="shadow-lg border-slate-200/50 bg-white/80 backdrop-blur-sm">
@@ -619,129 +762,107 @@ const Dashboard: React.FC = () => {
               <CardDescription>Get notified when fuel prices reach your target threshold</CardDescription>
             </CardHeader>
             <CardContent>
-              <form onSubmit={handleAlertSubmit}
-                className="space-y-4"
-              >
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-700">Fuel Type</label>
-                  <Select value={alertForm.product} onValueChange={value => setAlertForm(f => ({ ...f, product: value }))}>
-                    <SelectTrigger className="bg-white/50">
-                      <SelectValue placeholder="Select fuel type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Diesel">🚛 Diesel</SelectItem>
-                      <SelectItem value="Gasoline">⛽ Gasoline</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-700">Area</label>
-                  <Input
-                    type="text"
-                    placeholder="e.g., Midwest, National, California"
-                    value={alertForm.area}
-                    required
-                    className="bg-white/50"
-                    onChange={e => setAlertForm(f => ({ ...f, area: e.target.value }))}
-                  />
-                </div>
-                
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-700">Price Threshold</label>
-                  <div className="relative">
-                    <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="0.00"
-                      value={alertForm.threshold}
-                      required
-                      className="pl-10 bg-white/50"
-                      onChange={e => setAlertForm(f => ({ ...f, threshold: e.target.value }))}
-                    />
-                  </div>
-                </div>
-                
-                {alertError && (
-                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm flex items-center gap-2">
-                    <AlertTriangle className="h-4 w-4" />
-                    {alertError}
-                  </div>
-                )}
-                {alertSuccess && (
-                  <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-green-600 text-sm flex items-center gap-2">
-                    <Activity className="h-4 w-4" />
-                    {alertSuccess}
-                  </div>
-                )}
-                
-                <Button type="submit" disabled={alertLoading} className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600">
-                  {alertLoading ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                      Setting Alert...
-                    </>
-                  ) : (
-                    <>
-                      <Bell className="h-4 w-4 mr-2" />
-                      Set Price Alert
-                    </>
-                  )}
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
-
-          {/* Automated Order Form */}
-          <Card className="shadow-lg border-slate-200/50 bg-white/80 backdrop-blur-sm">
-            <CardHeader className="pb-4">
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <div className="p-2 bg-green-100 rounded-lg">
-                  <ShoppingCart className="h-4 w-4 text-green-600" />
-                </div>
-                Automated Orders
-              </CardTitle>
-              <CardDescription>Set up automatic fuel orders when prices hit your target</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleOrderSubmit}
-                className="space-y-4"
-              >
-                <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* Price Alert Form */}
+                <form onSubmit={handleAlertSubmit} className="space-y-4">
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-slate-700">Fuel Type</label>
-                    <Select value={orderForm.product} onValueChange={value => setOrderForm(f => ({ ...f, product: value }))}>
-                      <SelectTrigger className="bg-white/50">
-                        <SelectValue placeholder="Select fuel" />
+                    <Select value={alertForm.product} onValueChange={value => setAlertForm(f => ({ ...f, product: value }))}>
+                      <SelectTrigger className="bg-white">
+                        <SelectValue placeholder="Select fuel type" />
                       </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Diesel">🚛 Diesel</SelectItem>
-                        <SelectItem value="Gasoline">⛽ Gasoline</SelectItem>
+                      <SelectContent className="bg-white border border-slate-200 shadow-lg">
+                        <SelectItem value="Diesel" className="bg-white hover:bg-slate-50">🚛 Diesel</SelectItem>
+                        <SelectItem value="Gasoline" className="bg-white hover:bg-slate-50">⛽ Gasoline</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
-                  
                   <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">Quantity (Gallons)</label>
+                    <label className="text-sm font-medium text-slate-700">Area</label>
                     <Input
-                      type="number"
-                      min="1"
-                      step="1"
-                      placeholder="1000"
-                      value={orderForm.quantity}
+                      type="text"
+                      placeholder="e.g., Midwest, National, California"
+                      value={alertForm.area}
                       required
-                      className="bg-white/50"
-                      onChange={e => setOrderForm(f => ({ ...f, quantity: e.target.value }))}
+                      className="pl-10 bg-white/50"
+                      onChange={e => setAlertForm(f => ({ ...f, area: e.target.value }))}
                     />
                   </div>
-                </div>
-                
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-700">Location</label>
-                  <div className="relative">
-                    <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Threshold Price</label>
+                    <div className="relative">
+                      <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0.00"
+                        value={alertForm.threshold}
+                        required
+                        className="pl-10 bg-white/50"
+                        onChange={e => setAlertForm(f => ({ ...f, threshold: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                  {alertError && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4" />
+                      {alertError}
+                    </div>
+                  )}
+                  {alertSuccess && (
+                    <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-green-600 text-sm">
+                      <div className="flex items-start gap-2">
+                        <Activity className="h-4 w-4 mt-0.5" />
+                        {alertSuccess}
+                      </div>
+                    </div>
+                  )}
+                  <Button type="submit" disabled={alertLoading} className="w-full bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600">
+                    {alertLoading ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                        Setting up alert...
+                      </>
+                    ) : (
+                      <>
+                        <Bell className="h-4 w-4 mr-2" />
+                        Set Alert
+                      </>
+                    )}
+                  </Button>
+                </form>
+                {/* Automated Order Form */}
+                <form onSubmit={handleOrderSubmit} className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-slate-700">Fuel Type</label>
+                      <Select value={orderForm.product} onValueChange={value => setOrderForm(f => ({ ...f, product: value }))}>
+                        <SelectTrigger className="bg-white">
+                          <SelectValue placeholder="Select fuel" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-white border border-slate-200 shadow-lg">
+                          <SelectItem value="Diesel" className="bg-white hover:bg-slate-50">🚛 Diesel</SelectItem>
+                          <SelectItem value="Gasoline" className="bg-white hover:bg-slate-50">⛽ Gasoline</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-slate-700">Quantity (Gallons)</label>
+                      <Input
+                        type="number"
+                        min="1"
+                        step="1"
+                        placeholder="1000"
+                        value={orderForm.quantity}
+                        required
+                        className="bg-white/50"
+                        onChange={e => setOrderForm(f => ({ ...f, quantity: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Area</label>
                     <Input
                       type="text"
                       placeholder="e.g., Midwest, National, California"
@@ -751,54 +872,98 @@ const Dashboard: React.FC = () => {
                       onChange={e => setOrderForm(f => ({ ...f, area: e.target.value }))}
                     />
                   </div>
-                </div>
-                
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-700">Target Price</label>
-                  <div className="relative">
-                    <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Location</label>
                     <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="0.00"
-                      value={orderForm.targetPrice}
+                      type="text"
+                      placeholder="e.g., address or city"
+                      value={orderForm.location}
                       required
                       className="pl-10 bg-white/50"
-                      onChange={e => setOrderForm(f => ({ ...f, targetPrice: e.target.value }))}
+                      onChange={e => setOrderForm(f => ({ ...f, location: e.target.value }))}
                     />
                   </div>
-                </div>
-                
-                {orderError && (
-                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm flex items-center gap-2">
-                    <AlertTriangle className="h-4 w-4" />
-                    {orderError}
-                  </div>
-                )}
-                {orderSuccess && (
-                  <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-green-600 text-sm">
-                    <div className="flex items-start gap-2">
-                      <Activity className="h-4 w-4 mt-0.5" />
-                      {orderSuccess}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Target Price</label>
+                    <div className="relative">
+                      <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0.00"
+                        value={orderForm.targetPrice}
+                        required
+                        className="pl-10 bg-white/50"
+                        onChange={e => setOrderForm(f => ({ ...f, targetPrice: e.target.value }))}
+                      />
                     </div>
                   </div>
-                )}
-                
-                <Button type="submit" disabled={orderLoading} className="w-full bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600">
-                  {orderLoading ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                      Setting up order...
-                    </>
-                  ) : (
-                    <>
-                      <ShoppingCart className="h-4 w-4 mr-2" />
-                      Set Up Automated Order
-                    </>
+                  {orderError && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4" />
+                      {orderError}
+                    </div>
                   )}
-                </Button>
-              </form>
+                  {orderSuccess && (
+                    <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-green-600 text-sm">
+                      <div className="flex items-start gap-2">
+                        <Activity className="h-4 w-4 mt-0.5" />
+                        {orderSuccess}
+                      </div>
+                    </div>
+                  )}
+                  <Button type="submit" disabled={orderLoading} className="w-full bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600">
+                    {orderLoading ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                        Setting up order...
+                      </>
+                    ) : (
+                      <>
+                        <ShoppingCart className="h-4 w-4 mr-2" />
+                        Set Up Automated Order
+                      </>
+                    )}
+                  </Button>
+                </form>
+                {/* Order History Table */}
+                <div className="md:col-span-2 mt-8">
+                  <h3 className="text-lg font-semibold mb-2">Order History</h3>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Product</TableHead>
+                        <TableHead>Area</TableHead>
+                        <TableHead>Location</TableHead>
+                        <TableHead>Quantity</TableHead>
+                        <TableHead>Target Price</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {orders.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={7} className="text-center text-slate-500">No orders found.</TableCell>
+                        </TableRow>
+                      ) : (
+                        orders.map((order: any) => (
+                          <TableRow key={order.id}>
+                            <TableCell>{new Date(order.created_at).toLocaleString()}</TableCell>
+                            <TableCell>{order.product}</TableCell>
+                            <TableCell>{order.area}</TableCell>
+                            <TableCell>{order.location}</TableCell>
+                            <TableCell>{order.quantity}</TableCell>
+                            <TableCell>${order.target_price}</TableCell>
+                            <TableCell>{order.status}</TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
             </CardContent>
           </Card>
         </motion.div>
@@ -810,7 +975,7 @@ const Dashboard: React.FC = () => {
           transition={{ duration: 0.5, delay: 0.2 }}
           className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"
         >
-          <Card className="shadow-lg border-slate-200/50 bg-gradient-to-br from-green-50 to-green-100/50 backdrop-blur-sm">
+        <Card className="shadow-lg border-slate-200/50 bg-card text-card-foreground backdrop-blur-sm">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -831,7 +996,7 @@ const Dashboard: React.FC = () => {
             </CardContent>
           </Card>
 
-          <Card className="shadow-lg border-slate-200/50 bg-gradient-to-br from-blue-50 to-blue-100/50 backdrop-blur-sm">
+        <Card className="shadow-lg border-slate-200/50 bg-card text-card-foreground backdrop-blur-sm">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -849,7 +1014,7 @@ const Dashboard: React.FC = () => {
             </CardContent>
           </Card>
 
-          <Card className="shadow-lg border-slate-200/50 bg-gradient-to-br from-red-50 to-red-100/50 backdrop-blur-sm">
+        <Card className="shadow-lg border-slate-200/50 bg-card text-card-foreground backdrop-blur-sm">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -867,7 +1032,7 @@ const Dashboard: React.FC = () => {
             </CardContent>
           </Card>
 
-          <Card className="shadow-lg border-slate-200/50 bg-gradient-to-br from-emerald-50 to-emerald-100/50 backdrop-blur-sm">
+        <Card className="shadow-lg border-slate-200/50 bg-card text-card-foreground backdrop-blur-sm">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -892,7 +1057,7 @@ const Dashboard: React.FC = () => {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.3 }}
         >
-          <Card className="shadow-lg border-slate-200/50 bg-white/80 backdrop-blur-sm">
+        <Card className="shadow-lg border-slate-200/50 bg-card text-card-foreground backdrop-blur-sm">
             <CardHeader className="pb-4">
               <div className="flex items-center justify-between">
                 <div>
@@ -924,7 +1089,9 @@ const Dashboard: React.FC = () => {
             </CardHeader>
             <CardContent className="p-6">
               <div className="h-80">
-                <Line data={chartData} options={lineOptions} />
+                <div style={{ width: '100%', height: '320px' }}>
+                  <Line data={chartData} options={lineOptions} />
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -936,7 +1103,7 @@ const Dashboard: React.FC = () => {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.4 }}
         >
-          <Card className="shadow-lg border-slate-200/50 bg-white/80 backdrop-blur-sm">
+        <Card className="shadow-lg border-slate-200/50 bg-card text-card-foreground backdrop-blur-sm">
             <CardHeader className="pb-4">
               <div className="flex items-center justify-between">
                 <div>

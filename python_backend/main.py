@@ -1,3 +1,163 @@
+# --- Owner API: Spot Prices & Historical Data ---
+
+from fastapi import APIRouter
+from fastapi import FastAPI, HTTPException, Depends, status, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from pydantic import BaseModel, EmailStr, Field
+from passlib.context import CryptContext
+from jose import JWTError, jwt
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, update
+import os
+import stripe
+import httpx
+import asyncio
+from typing import Optional, List
+from datetime import datetime, timedelta
+from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+from database import get_db, engine, Base, User, PriceAlert, Order
+
+# --- Load .env ---
+load_dotenv()
+# --- Config ---
+SUPABASE_PASSWORD = os.getenv('SUPABASE_PASSWORD', 'A0000000l123')
+DATABASE_URL = os.getenv('DATABASE_URL', f'postgresql+asyncpg://postgres:{SUPABASE_PASSWORD}@db.uatnbrfhdgpljsqcezlr.supabase.co:5432/postgres')
+JWT_SECRET = os.getenv('JWT_SECRET', 'supersecret')
+STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY', 'sk_test')
+EIA_API_KEY = os.getenv('EIA_API_KEY', 'G19nzdqrKjjAkYvnZt4KuKesf5eti3AhoHE7NSyR')
+print(f"EIA_API_KEY loaded: {EIA_API_KEY[:10]}..." if EIA_API_KEY else "EIA_API_KEY not found")
+ALGORITHM = 'HS256'
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
+ALLOWED_ORIGINS = os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173').split(',')
+
+stripe.api_key = STRIPE_SECRET_KEY
+
+# --- Lifespan ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup - Create tables
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        print("Successfully connected to database and created tables!")
+    except Exception as e:
+        print(f"Failed to connect to database: {e}")
+        raise
+    
+    yield
+    
+    # Shutdown
+    await engine.dispose()
+
+# --- App ---
+app = FastAPI(lifespan=lifespan)
+
+# Rate limiting
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
+
+# Security
+pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+# --- Owner API: Spot Prices & Historical Data ---
+# East Coast PADD codes (EIA): PADD 1 = East Coast
+EAST_COAST_PADD = "PADD 1"
+EAST_COAST_STATES = [
+    "CT", "DE", "FL", "GA", "ME", "MD", "MA", "NH", "NJ", "NY", "NC", "PA", "RI", "SC", "VT", "VA"
+]
+
+owner_router = APIRouter(prefix="/api/owner", tags=["owner"])
+
+def filter_east_coast_prices(data):
+    # EIA data: filter by area_name or state abbreviation
+    east_coast = [row for row in data if (
+        row.get("area-name", "").startswith("East Coast") or
+        row.get("area-code", "") == EAST_COAST_PADD or
+        row.get("area-name", "") in EAST_COAST_STATES or
+        row.get("area-code", "") in EAST_COAST_STATES
+    )]
+    return east_coast if east_coast else data  # fallback to all if empty
+
+async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)) -> User:
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[ALGORITHM])
+        user_id: str = payload.get("user_id")
+        if user_id is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    try:
+        user_id_int = int(user_id)
+    except ValueError:
+        raise credentials_exception
+    stmt = select(User).where(User.id == user_id_int)
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
+    if not user:
+        raise credentials_exception
+    return user
+
+@owner_router.get("/spot-prices")
+@limiter.limit("30/minute")
+async def get_owner_spot_prices(request: Request, current_user: User = Depends(get_current_user)):
+    if current_user.role != "owner":
+        raise HTTPException(status_code=403, detail="Only truck stop owners can access this endpoint.")
+    url = f"https://api.eia.gov/v2/petroleum/pri/gnd/data/?api_key={EIA_API_KEY}&frequency=weekly&data[0]=value&sort[0][column]=period&sort[0][direction]=desc&length=20"
+    try:
+        timeout = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json().get("response", {}).get("data", [])
+            filtered = filter_east_coast_prices(data)
+            return {"data": filtered}
+    except Exception as e:
+        print(f"Error in /api/owner/spot-prices: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch spot prices.")
+
+@owner_router.get("/historical")
+@limiter.limit("30/minute")
+async def get_owner_historical(request: Request, current_user: User = Depends(get_current_user)):
+    if current_user.role != "owner":
+        raise HTTPException(status_code=403, detail="Only truck stop owners can access this endpoint.")
+    url = f"https://api.eia.gov/v2/petroleum/pri/gnd/data/?api_key={EIA_API_KEY}&frequency=daily&data[0]=value&sort[0][column]=period&sort[0][direction]=desc&length=14"
+    try:
+        timeout = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json().get("response", {}).get("data", [])
+            filtered = filter_east_coast_prices(data)
+            # Return last 7 days
+            filtered = sorted(filtered, key=lambda x: x.get("period", ""), reverse=True)[:7]
+            return {"data": filtered}
+    except Exception as e:
+        print(f"Error in /api/owner/historical: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch historical prices.")
+
+# Register owner router
+app.include_router(owner_router)
 from fastapi import FastAPI, HTTPException, Depends, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
