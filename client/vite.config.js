@@ -16,9 +16,25 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:5000',
+        target: process.env.NODE_ENV === 'production' 
+          ? 'https://your-vercel-app.vercel.app' 
+          : 'http://127.0.0.1:5000',
         changeOrigin: true,
+        secure: true,
         rewrite: (path) => path.replace(/^\/api/, '')
+      },
+    },
+  },
+  build: {
+    outDir: 'dist',
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+          charts: ['chart.js', 'react-chartjs-2'],
+          ui: ['@radix-ui/react-select', '@radix-ui/react-dialog', 'lucide-react'],
+        },
       },
     },
   },

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "WebFetch(domain:api.eia.gov)"
+    ],
+    "deny": []
+  }
+}

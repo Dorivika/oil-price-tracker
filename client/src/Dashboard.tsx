@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { getPrices, setAuthToken, clearAuthToken, createAlert, createOrder } from './api';
-import { Line } from 'react-chartjs-2';
+import { Line, Chart } from 'react-chartjs-2';
+import SimpleLineChart from './components/SimpleCandlestickChart';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -10,7 +11,9 @@ import {
   Title,
   Tooltip,
   Legend,
+  TimeScale,
 } from 'chart.js';
+import 'chartjs-adapter-date-fns';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -43,7 +46,16 @@ import {
 import { motion } from 'framer-motion';
 
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
+ChartJS.register(
+  CategoryScale, 
+  LinearScale, 
+  TimeScale, 
+  PointElement, 
+  LineElement, 
+  Title, 
+  Tooltip, 
+  Legend
+);
 
 // Night mode hook
 function useDarkMode() {
@@ -94,6 +106,16 @@ const Dashboard: React.FC = () => {
   const [orderSuccess, setOrderSuccess] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  
+  // Chart and filter states
+  const [chartType, setChartType] = useState<'line'>('line');
+  const [timePeriod, setTimePeriod] = useState<'hour' | 'day' | 'week'>('week');
+  const [productType, setProductType] = useState<'Gasoline' | 'Diesel' | 'all'>('all');
+  
+  // Force weekly as default on component mount to avoid 404 errors
+  useEffect(() => {
+    setTimePeriod('week');
+  }, []);
 
   // Check for existing auth token on component mount
   useEffect(() => {
@@ -279,7 +301,7 @@ const Dashboard: React.FC = () => {
     }
   }, [user, fetchOrders]);
 
-  // Fetch prices when user changes
+  // Fetch prices when user, time period, or product type changes
   useEffect(() => {
     if (!user) {
       setLoading(false);
@@ -290,7 +312,10 @@ const Dashboard: React.FC = () => {
       setLoading(true);
       setError(null);
       try {
-        const res = await getPrices();
+        const res = await getPrices(
+          timePeriod, 
+          productType === 'all' ? undefined : productType
+        );
         const apiData = res.data || [];
         setPrices(Array.isArray(apiData) ? apiData : []);
       } catch (err: any) {
@@ -308,7 +333,7 @@ const Dashboard: React.FC = () => {
     };
     
     fetchPrices();
-  }, [user]);
+  }, [user, timePeriod, productType]);
 
   // Refresh function - moved before early returns to fix hook order
   const refreshPrices = useCallback(async () => {
@@ -316,7 +341,10 @@ const Dashboard: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await getPrices();
+      const res = await getPrices(
+        timePeriod, 
+        productType === 'all' ? undefined : productType
+      );
       const apiData = res.data || [];
       setPrices(Array.isArray(apiData) ? apiData : []);
     } catch (err: any) {
@@ -331,15 +359,16 @@ const Dashboard: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, timePeriod, productType]);
 
   // Memoized calculations for better performance - moved before early returns
-  const { paginatedPrices, totalPages, chartData, stats } = useMemo(() => {
+  const { paginatedPrices, totalPages, chartData, simpleChartData, stats } = useMemo(() => {
     if (!Array.isArray(prices) || prices.length === 0) {
       return {
         paginatedPrices: [],
         totalPages: 0,
         chartData: { labels: [], datasets: [] },
+        simpleChartData: [],
         stats: { latest: { value: '-', period: '-', 'area-name': '-' }, minPrice: '-', maxPrice: '-', avgPrice: '-' }
       };
     }
@@ -362,6 +391,12 @@ const Dashboard: React.FC = () => {
       }],
     };
 
+    // Simple chart data for SimpleLineChart
+    const simpleChartData = chartPrices.map((item, index) => ({
+      period: item?.period ?? `Week ${index + 1}`,
+      value: Number(item?.value ?? 0)
+    })).filter(item => item.value > 0);
+
     // Stats calculation
     const latest = prices[0];
     const numericPrices = prices.map((p) => Number(p?.value ?? 0)).filter(p => p > 0);
@@ -375,6 +410,7 @@ const Dashboard: React.FC = () => {
       paginatedPrices,
       totalPages,
       chartData,
+      simpleChartData,
       stats: { latest, minPrice, maxPrice, avgPrice }
     };
   }, [prices, page, pageSize]);
@@ -390,6 +426,7 @@ const Dashboard: React.FC = () => {
       y: { title: { display: true, text: 'Price ($/GAL)' } },
     },
   }), []);
+
 
   // Early returns after all hooks are defined
   if (loading) return (
@@ -679,36 +716,64 @@ const Dashboard: React.FC = () => {
           {/* Analytics Controls */}
           <div className="flex flex-wrap gap-4 mt-6 items-center">
             <div>
-              <label className="text-sm font-medium mr-2">Area:</label>
-              <Select value={alertForm.area} onValueChange={value => setAlertForm(f => ({ ...f, area: value }))}>
-                <SelectTrigger className="min-w-[160px]">
-                  <SelectValue placeholder="East Coast" />
+              <label className="text-sm font-medium mr-2">Time Period:</label>
+              <Select value={timePeriod} onValueChange={(value: 'hour' | 'day' | 'week') => setTimePeriod(value)}>
+                <SelectTrigger className="min-w-[120px]">
+                  <SelectValue placeholder="Week" />
                 </SelectTrigger>
                 <SelectContent className="bg-white border border-slate-200 shadow-lg">
-                  <SelectItem value="East Coast" className="bg-white hover:bg-slate-50">East Coast</SelectItem>
-                  <SelectItem value="National" className="bg-white hover:bg-slate-50">National</SelectItem>
-                  <SelectItem value="Midwest" className="bg-white hover:bg-slate-50">Midwest</SelectItem>
-                  <SelectItem value="California" className="bg-white hover:bg-slate-50">California</SelectItem>
-                  <SelectItem value="Texas" className="bg-white hover:bg-slate-50">Texas</SelectItem>
-                  <SelectItem value="Southeast" className="bg-white hover:bg-slate-50">Southeast</SelectItem>
-                  <SelectItem value="Other" className="bg-white hover:bg-slate-50">Other</SelectItem>
+                  {user?.role === 'owner' && (
+                    <>
+                      <SelectItem value="hour" className="bg-white hover:bg-slate-50">⏰ Hourly</SelectItem>
+                      <SelectItem value="day" className="bg-white hover:bg-slate-50">📅 Daily</SelectItem>
+                    </>
+                  )}
+                  <SelectItem value="week" className="bg-white hover:bg-slate-50">🗓️ Weekly</SelectItem>
+                  {user?.role !== 'owner' && (
+                    <SelectItem value="week" disabled className="bg-gray-100 text-gray-400">
+                      Daily/Hourly (Owner Only)
+                    </SelectItem>
+                  )}
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <label className="text-sm font-medium mr-2">History:</label>
-              <Select value={String(pageSize)} onValueChange={value => setPageSize(Number(value))}>
-                <SelectTrigger className="min-w-[120px]">
-                  <SelectValue placeholder="7 days" />
+              <label className="text-sm font-medium mr-2">Fuel Type:</label>
+              <Select value={productType} onValueChange={(value: 'Gasoline' | 'Diesel' | 'all') => setProductType(value)}>
+                <SelectTrigger className="min-w-[140px]">
+                  <SelectValue placeholder="All Fuels" />
                 </SelectTrigger>
                 <SelectContent className="bg-white border border-slate-200 shadow-lg">
-                  <SelectItem value="7" className="bg-white hover:bg-slate-50">7 days</SelectItem>
-                  <SelectItem value="30" className="bg-white hover:bg-slate-50">30 days</SelectItem>
-                  <SelectItem value="90" className="bg-white hover:bg-slate-50">90 days</SelectItem>
-                  <SelectItem value="365" className="bg-white hover:bg-slate-50">1 year</SelectItem>
+                  <SelectItem value="all" className="bg-white hover:bg-slate-50">🔧 All Fuels</SelectItem>
+                  <SelectItem value="Gasoline" className="bg-white hover:bg-slate-50">⛽ Gasoline</SelectItem>
+                  <SelectItem value="Diesel" className="bg-white hover:bg-slate-50">🚛 Diesel</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+            <div>
+              <label className="text-sm font-medium mr-2">Results:</label>
+              <Select value={String(pageSize)} onValueChange={value => setPageSize(Number(value))}>
+                <SelectTrigger className="min-w-[100px]">
+                  <SelectValue placeholder="20" />
+                </SelectTrigger>
+                <SelectContent className="bg-white border border-slate-200 shadow-lg">
+                  <SelectItem value="20" className="bg-white hover:bg-slate-50">20</SelectItem>
+                  <SelectItem value="50" className="bg-white hover:bg-slate-50">50</SelectItem>
+                  <SelectItem value="100" className="bg-white hover:bg-slate-50">100</SelectItem>
+                  <SelectItem value="200" className="bg-white hover:bg-slate-50">200</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="flex items-center gap-2"
+              onClick={refreshPrices}
+              disabled={loading}
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              {loading ? 'Refreshing...' : 'Refresh'}
+            </Button>
             <Button variant="outline" size="sm" className="flex items-center gap-2">
               <Download className="h-4 w-4" />
               Export CSV
@@ -1087,11 +1152,12 @@ const Dashboard: React.FC = () => {
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="p-6">
-              <div className="h-80">
-                <div style={{ width: '100%', height: '320px' }}>
-                  <Line data={chartData} options={lineOptions} />
-                </div>
+            <CardContent className="p-0">
+              <div className="h-96">
+                <SimpleLineChart 
+                  data={simpleChartData}
+                  height={384}
+                />
               </div>
             </CardContent>
           </Card>
