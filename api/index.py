@@ -17,14 +17,12 @@ sys.path.insert(0, str(backend_path))
 from mangum import Mangum
 
 # Import the FastAPI app
-from main import app
+from main import app as fastapi_app
 
 # Create the handler for Vercel
 # lifespan="off" prevents startup/shutdown events that don't work in serverless
-handler = Mangum(app, lifespan="off", api_gateway_base_path="/api")
+handler = Mangum(fastapi_app, lifespan="off", api_gateway_base_path="/api")
 
-# Expose for Vercel
-app = handler
 
 
 
