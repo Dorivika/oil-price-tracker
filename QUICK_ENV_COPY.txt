@@ -1,0 +1,70 @@
+🔐 VERCEL ENVIRONMENT VARIABLES - QUICK COPY
+==============================================
+
+Copy these values to add in Vercel Dashboard:
+(Settings → Environment Variables → Add New)
+
+---
+
+KEY: DATABASE_URL
+VALUE: postgresql+asyncpg://postgres:A0000000l123@db.ebrtihsffmlanqrdxdhy.supabase.co:5432/postgres
+ENVIRONMENTS: ✓ Production  ✓ Preview  ✓ Development
+
+---
+
+KEY: SUPABASE_PASSWORD
+VALUE: A0000000l123
+ENVIRONMENTS: ✓ Production  ✓ Preview  ✓ Development
+
+---
+
+KEY: JWT_SECRET
+VALUE: supersecret
+⚠️ CHANGE THIS TO A STRONG RANDOM STRING FOR PRODUCTION!
+ENVIRONMENTS: ✓ Production  ✓ Preview  ✓ Development
+
+---
+
+KEY: EIA_API_KEY
+VALUE: G19nzdqrKjjAkYvnZt4KuKesf5eti3AhoHE7NSyR
+ENVIRONMENTS: ✓ Production  ✓ Preview  ✓ Development
+
+---
+
+KEY: STRIPE_SECRET_KEY
+VALUE: sk_test
+⚠️ REPLACE WITH YOUR ACTUAL STRIPE KEY
+ENVIRONMENTS: ✓ Production  ✓ Preview  ✓ Development
+
+---
+
+KEY: ALLOWED_ORIGINS
+VALUE: https://oil-price-tracker.vercel.app
+⚠️ UPDATE WITH YOUR ACTUAL VERCEL URL AFTER FIRST DEPLOY
+ENVIRONMENTS: ✓ Production  ✓ Preview  ✓ Development
+
+---
+
+KEY: USE_LOCAL_DB
+VALUE: false
+ENVIRONMENTS: ✓ Production  ✓ Preview  ✓ Development
+
+==============================================
+
+📍 WHERE TO ADD THESE:
+1. Go to: https://vercel.com/dashboard
+2. Select your project: oil-price-tracker
+3. Click: Settings → Environment Variables
+4. Click: Add New
+5. Copy/paste each KEY and VALUE above
+6. Select all 3 environments for each
+7. Click Save
+
+🔄 AFTER ADDING ALL VARIABLES:
+1. Go to: Deployments tab
+2. Click ••• menu on latest deployment
+3. Click: Redeploy
+4. Wait for deployment to complete
+5. Test your app!
+
+✅ Your app should now work without JSON errors!
