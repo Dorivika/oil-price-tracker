@@ -36,25 +36,37 @@ ALLOWED_ORIGINS = os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000,http://loc
 
 stripe.api_key = STRIPE_SECRET_KEY
 
+# Check if running in serverless environment (checked at runtime, not import time)
+def is_serverless():
+    return os.getenv('SERVERLESS', 'false').lower() == 'true'
+
 # --- Lifespan ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup - Create tables
-    try:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        print("Successfully connected to database and created tables!")
-    except Exception as e:
-        print(f"Failed to connect to database: {e}")
-        raise
+    # Startup - Create tables (skip in serverless)
+    if not is_serverless():
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            print("Successfully connected to database and created tables!")
+        except Exception as e:
+            print(f"Failed to connect to database: {e}")
+            # Don't raise in serverless - allow function to continue
+            if not is_serverless():
+                raise
+    else:
+        print("Running in serverless mode - skipping database initialization")
     
     yield
     
     # Shutdown
-    await engine.dispose()
+    if not is_serverless():
+        await engine.dispose()
 
 # --- App ---
-app = FastAPI(lifespan=lifespan)
+# Create app without lifespan initially
+app = FastAPI()
+
 
 # Rate limiting
 limiter = Limiter(key_func=get_remote_address)
