@@ -1,9 +1,8 @@
 """
 Vercel Serverless Function Entry Point
-This file adapts the FastAPI app for Vercel's serverless environment
+This file adapts the FastAPI app for Vercel's serverless environment using Mangum
 """
 import sys
-import os
 from pathlib import Path
 
 # Add the python_backend directory to the path
@@ -12,15 +11,9 @@ sys.path.insert(0, str(backend_path))
 
 # Import the FastAPI app
 from main import app
+from mangum import Mangum
 
-# Vercel serverless function handler
-def handler(request, context):
-    """
-    Vercel expects this handler function
-    """
-    return app
+# Wrap FastAPI app with Mangum for serverless compatibility
+handler = Mangum(app, lifespan="off")
 
-# Also expose app directly for ASGI
-# Vercel will use this
-app = app
 
