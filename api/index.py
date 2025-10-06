@@ -4,11 +4,23 @@ This file adapts the FastAPI app for Vercel's serverless environment
 """
 import sys
 import os
+from pathlib import Path
 
 # Add the python_backend directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python_backend'))
+backend_path = Path(__file__).parent.parent / 'python_backend'
+sys.path.insert(0, str(backend_path))
 
+# Import the FastAPI app
 from main import app
 
-# Vercel expects a handler
-handler = app
+# Vercel serverless function handler
+def handler(request, context):
+    """
+    Vercel expects this handler function
+    """
+    return app
+
+# Also expose app directly for ASGI
+# Vercel will use this
+app = app
+
