@@ -26,7 +26,6 @@ from database import get_db, engine, Base, User, PriceAlert, Order
 load_dotenv()
 # --- Config ---
 SUPABASE_PASSWORD = os.getenv('SUPABASE_PASSWORD', 'A0000000l123')
-DATABASE_URL = os.getenv('DATABASE_URL', f'postgresql+asyncpg://postgres:{SUPABASE_PASSWORD}@db.uatnbrfhdgpljsqcezlr.supabase.co:5432/postgres')
 JWT_SECRET = os.getenv('JWT_SECRET', 'supersecret')
 STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY', 'sk_test')
 EIA_API_KEY = os.getenv('EIA_API_KEY', 'G19nzdqrKjjAkYvnZt4KuKesf5eti3AhoHE7NSyR')
@@ -158,79 +157,6 @@ async def get_owner_historical(request: Request, current_user: User = Depends(ge
 
 # Register owner router
 app.include_router(owner_router)
-from fastapi import FastAPI, HTTPException, Depends, status, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel, EmailStr, Field
-from passlib.context import CryptContext
-from jose import JWTError, jwt
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
-import os
-import stripe
-import httpx
-import asyncio
-from typing import Optional, List
-from datetime import datetime, timedelta
-from contextlib import asynccontextmanager
-from dotenv import load_dotenv
-from database import get_db, engine, Base, User, PriceAlert, Order
-
-# --- Load .env ---
-load_dotenv()
-# --- Config ---
-SUPABASE_PASSWORD = os.getenv('SUPABASE_PASSWORD', 'A0000000l123')
-DATABASE_URL = os.getenv('DATABASE_URL', f'postgresql+asyncpg://postgres:{SUPABASE_PASSWORD}@db.uatnbrfhdgpljsqcezlr.supabase.co:5432/postgres')
-JWT_SECRET = os.getenv('JWT_SECRET', 'supersecret')
-STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY', 'sk_test')
-EIA_API_KEY = os.getenv('EIA_API_KEY', 'G19nzdqrKjjAkYvnZt4KuKesf5eti3AhoHE7NSyR')
-print(f"EIA_API_KEY loaded: {EIA_API_KEY[:10]}..." if EIA_API_KEY else "EIA_API_KEY not found")
-ALGORITHM = 'HS256'
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
-ALLOWED_ORIGINS = os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173').split(',')
-
-stripe.api_key = STRIPE_SECRET_KEY
-
-# --- Lifespan ---
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup - Create tables
-    try:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        print("Successfully connected to database and created tables!")
-    except Exception as e:
-        print(f"Failed to connect to database: {e}")
-        raise
-    
-    yield
-    
-    # Shutdown
-    await engine.dispose()
-
-# --- App ---
-app = FastAPI(lifespan=lifespan)
-
-# Rate limiting
-limiter = Limiter(key_func=get_remote_address)
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"]
-)
-
-# Security
-pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 # --- Models ---
 class UserIn(BaseModel):

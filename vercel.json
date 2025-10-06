@@ -1,38 +1,21 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "client/package.json",
-      "use": "@vercel/static-build",
-      "config": {
-        "distDir": "dist"
-      }
-    },
-    {
-      "src": "python_backend/main.py",
-      "use": "@vercel/python"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/python_backend/main.py"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/client/$1"
-    }
-  ],
-  "outputDirectory": "client/dist",
   "buildCommand": "cd client && npm install && npm run build",
-  "devCommand": "cd client && npm run dev",
-  "installCommand": "cd client && npm install && cd ../python_backend && pip install -r requirements.txt",
+  "outputDirectory": "client/dist",
+  "framework": "vite",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/api/index"
+    }
+  ],
   "functions": {
-    "python_backend/main.py": {
-      "runtime": "python3.9"
+    "api/index.py": {
+      "runtime": "python3.9",
+      "maxDuration": 30
     }
   },
   "env": {
-    "PYTHONPATH": "python_backend"
+    "PYTHONPATH": "/var/task"
   }
 }

@@ -111,11 +111,72 @@ const Dashboard: React.FC = () => {
   const [chartType, setChartType] = useState<'line'>('line');
   const [timePeriod, setTimePeriod] = useState<'hour' | 'day' | 'week'>('week');
   const [productType, setProductType] = useState<'Gasoline' | 'Diesel' | 'all'>('all');
+  const [selectedRegion, setSelectedRegion] = useState<string>('National');
+  const [detectedLocation, setDetectedLocation] = useState<string | null>(null);
+  const [locationPermission, setLocationPermission] = useState<'pending' | 'granted' | 'denied'>('pending');
   
   // Force weekly as default on component mount to avoid 404 errors
   useEffect(() => {
     setTimePeriod('week');
   }, []);
+
+  // Region mapping from coordinates to fuel regions
+  const getRegionFromCoordinates = (latitude: number, longitude: number): string => {
+    // PADD Region boundaries (approximate)
+    if (latitude >= 40 && longitude >= -80) {
+      return 'East Coast'; // PADD 1
+    } else if (latitude >= 35 && latitude < 50 && longitude >= -100 && longitude < -80) {
+      return 'Midwest'; // PADD 2  
+    } else if (latitude >= 25 && latitude < 40 && longitude >= -105 && longitude < -80) {
+      return 'Southeast'; // PADD 3 (Gulf Coast)
+    } else if (latitude >= 35 && longitude >= -125 && longitude < -100) {
+      return 'Rocky Mountain'; // PADD 4
+    } else if (latitude >= 32 && longitude >= -125 && longitude < -115) {
+      return 'West Coast'; // PADD 5
+    } else if (latitude >= 25 && latitude < 35 && longitude >= -100 && longitude < -80) {
+      return 'Texas'; // Texas specific
+    } else if (latitude >= 32 && latitude < 42 && longitude >= -125 && longitude < -120) {
+      return 'California'; // California specific
+    }
+    return 'National'; // Default fallback
+  };
+
+  // Request location permission and detect region
+  const requestLocationAccess = useCallback(async () => {
+    if (!navigator.geolocation) {
+      setLocationPermission('denied');
+      return;
+    }
+
+    try {
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: false,
+          timeout: 10000,
+          maximumAge: 300000 // 5 minutes cache
+        });
+      });
+
+      const { latitude, longitude } = position.coords;
+      const detectedRegion = getRegionFromCoordinates(latitude, longitude);
+      
+      setDetectedLocation(detectedRegion);
+      setSelectedRegion(detectedRegion);
+      setLocationPermission('granted');
+      
+      console.log(`Location detected: ${latitude}, ${longitude} → ${detectedRegion}`);
+    } catch (error) {
+      console.warn('Location access denied or failed:', error);
+      setLocationPermission('denied');
+    }
+  }, []);
+
+  // Auto-request location on component mount
+  useEffect(() => {
+    if (locationPermission === 'pending') {
+      requestLocationAccess();
+    }
+  }, [locationPermission, requestLocationAccess]);
 
   // Check for existing auth token on component mount
   useEffect(() => {
@@ -125,13 +186,22 @@ const Dashboard: React.FC = () => {
       
       if (token && userData) {
         try {
-          // Test if token is valid by making a simple API call
+          const parsed = JSON.parse(userData);
+          
+          // For truckers, just validate the token exists and set user without API call
+          if (parsed.role === 'trucker') {
+            setUser(parsed);
+            setAuthToken(token);
+            setShowAuth(false);
+            return;
+          }
+          
+          // For owners, test if token is valid by making a simple API call
           const res = await fetch('/api/prices', {
             headers: { Authorization: `Bearer ${token}` }
           });
           
           if (res.ok) {
-            const parsed = JSON.parse(userData);
             setUser(parsed);
             setAuthToken(token);
             setShowAuth(false);
@@ -301,9 +371,15 @@ const Dashboard: React.FC = () => {
     }
   }, [user, fetchOrders]);
 
-  // Fetch prices when user, time period, or product type changes
+  // Fetch prices when user, time period, product type, or region changes
   useEffect(() => {
     if (!user) {
+      setLoading(false);
+      return;
+    }
+    
+    // Don't fetch prices for truckers
+    if (user.role === 'trucker') {
       setLoading(false);
       return;
     }
@@ -314,7 +390,8 @@ const Dashboard: React.FC = () => {
       try {
         const res = await getPrices(
           timePeriod, 
-          productType === 'all' ? undefined : productType
+          productType === 'all' ? undefined : productType,
+          selectedRegion
         );
         const apiData = res.data || [];
         setPrices(Array.isArray(apiData) ? apiData : []);
@@ -333,7 +410,7 @@ const Dashboard: React.FC = () => {
     };
     
     fetchPrices();
-  }, [user, timePeriod, productType]);
+  }, [user, timePeriod, productType, selectedRegion]);
 
   // Refresh function - moved before early returns to fix hook order
   const refreshPrices = useCallback(async () => {
@@ -343,7 +420,8 @@ const Dashboard: React.FC = () => {
     try {
       const res = await getPrices(
         timePeriod, 
-        productType === 'all' ? undefined : productType
+        productType === 'all' ? undefined : productType,
+        selectedRegion
       );
       const apiData = res.data || [];
       setPrices(Array.isArray(apiData) ? apiData : []);
@@ -359,7 +437,7 @@ const Dashboard: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [user, timePeriod, productType]);
+  }, [user, timePeriod, productType, selectedRegion]);
 
   // Memoized calculations for better performance - moved before early returns
   const { paginatedPrices, totalPages, chartData, simpleChartData, stats } = useMemo(() => {
@@ -428,10 +506,39 @@ const Dashboard: React.FC = () => {
   }), []);
 
 
+  // Cycling loading messages
+  const loadingMessages = [
+    "Loading the best fuel prices for you",
+    "Fetching real-time data from EIA",
+    "Analyzing market trends and prices",
+    "Connecting to fuel data networks"
+  ];
+
   // Early returns after all hooks are defined
   if (loading) return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center">
-      <div className="text-lg">Loading prices...</div>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
+      <div className="gradient-loader">
+        {/* Fuel Icon */}
+        <div className="p-4 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl mb-4">
+          <Fuel className="h-16 w-16 text-white" />
+        </div>
+        
+        {/* Gradient Wave Text with Cycling Messages */}
+        <div className="gradient-wave-text cycling-text">
+          {loadingMessages.map((message, index) => (
+            <div key={index} className="text-cycle">
+              {message}
+            </div>
+          ))}
+        </div>
+        
+        {/* Floating Icons */}
+        <div className="floating-icons">
+          <div className="floating-icon">⛽</div>
+          <div className="floating-icon">🚛</div>
+          <div className="floating-icon">💰</div>
+        </div>
+      </div>
     </div>
   );
 
@@ -623,23 +730,6 @@ const Dashboard: React.FC = () => {
       </div>
     );
   }
-
-  // Defensive: fallback for empty or malformed data
-  // Defensive: fallback for empty or malformed data
-  if (user && user.role === 'trucker') {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center">
-        <Card className="max-w-md p-8 text-center shadow-xl bg-card text-card-foreground">
-          <div className="flex flex-col items-center gap-4">
-            <Fuel className="h-12 w-12 text-blue-500 mb-2" />
-            <h2 className="text-3xl font-bold mb-2">Coming Soon</h2>
-            <p className="text-lg text-slate-600 mb-4">The trucker dashboard is under construction.<br />Stay tuned for real-time gas prices, maps, and more!</p>
-            <Button onClick={() => { clearAuthToken(); setUser(null); setShowAuth(true); }} variant="outline" className="mt-2">Logout</Button>
-          </div>
-        </Card>
-      </div>
-    );
-  }
   if (!Array.isArray(prices) || prices.length === 0) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center">
@@ -666,10 +756,10 @@ const Dashboard: React.FC = () => {
                 <Fuel className="h-6 w-6 text-white" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent dark:text-foreground">
+                <h1 className="text-header-main bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent dark:text-foreground">
                   Oil Price Tracker
                 </h1>
-                <p className="text-sm text-slate-600 dark:text-slate-300">Real-time fuel analytics dashboard</p>
+                <p className="text-header-sub text-slate-600 dark:text-slate-300">Real-time fuel analytics dashboard</p>
               </div>
             </div>
             <div className="flex items-center gap-4">
@@ -714,11 +804,11 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
           {/* Analytics Controls */}
-          <div className="flex flex-wrap gap-4 mt-6 items-center">
-            <div>
-              <label className="text-sm font-medium mr-2">Time Period:</label>
+          <div className="flex flex-wrap gap-4 mt-6 items-end">
+            <div className="flex flex-col">
+              <label className="text-form-label mb-2 text-slate-700">Time Period</label>
               <Select value={timePeriod} onValueChange={(value: 'hour' | 'day' | 'week') => setTimePeriod(value)}>
-                <SelectTrigger className="min-w-[120px]">
+                <SelectTrigger className="w-[140px] h-10">
                   <SelectValue placeholder="Week" />
                 </SelectTrigger>
                 <SelectContent className="bg-white border border-slate-200 shadow-lg">
@@ -737,10 +827,28 @@ const Dashboard: React.FC = () => {
                 </SelectContent>
               </Select>
             </div>
-            <div>
-              <label className="text-sm font-medium mr-2">Fuel Type:</label>
+            <div className="flex flex-col">
+              <label className="text-form-label mb-2 text-slate-700">Region</label>
+              <Select value={selectedRegion} onValueChange={setSelectedRegion}>
+                <SelectTrigger className="w-[180px] h-10">
+                  <SelectValue placeholder="Select Region" />
+                </SelectTrigger>
+                <SelectContent className="bg-white border border-slate-200 shadow-lg">
+                  <SelectItem value="National" className="bg-white hover:bg-slate-50">🇺🇸 National</SelectItem>
+                  <SelectItem value="East Coast" className="bg-white hover:bg-slate-50">🏙️ East Coast</SelectItem>
+                  <SelectItem value="Midwest" className="bg-white hover:bg-slate-50">🌾 Midwest</SelectItem>
+                  <SelectItem value="Southeast" className="bg-white hover:bg-slate-50">🏖️ Southeast</SelectItem>
+                  <SelectItem value="Texas" className="bg-white hover:bg-slate-50">🤠 Texas</SelectItem>
+                  <SelectItem value="California" className="bg-white hover:bg-slate-50">🌴 California</SelectItem>
+                  <SelectItem value="West Coast" className="bg-white hover:bg-slate-50">🏔️ West Coast</SelectItem>
+                  <SelectItem value="Rocky Mountain" className="bg-white hover:bg-slate-50">⛰️ Rocky Mountain</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col">
+              <label className="text-form-label mb-2 text-slate-700">Fuel Type</label>
               <Select value={productType} onValueChange={(value: 'Gasoline' | 'Diesel' | 'all') => setProductType(value)}>
-                <SelectTrigger className="min-w-[140px]">
+                <SelectTrigger className="w-[140px] h-10">
                   <SelectValue placeholder="All Fuels" />
                 </SelectTrigger>
                 <SelectContent className="bg-white border border-slate-200 shadow-lg">
@@ -750,10 +858,10 @@ const Dashboard: React.FC = () => {
                 </SelectContent>
               </Select>
             </div>
-            <div>
-              <label className="text-sm font-medium mr-2">Results:</label>
+            <div className="flex flex-col">
+              <label className="text-form-label mb-2 text-slate-700">Results</label>
               <Select value={String(pageSize)} onValueChange={value => setPageSize(Number(value))}>
-                <SelectTrigger className="min-w-[100px]">
+                <SelectTrigger className="w-[80px] h-10">
                   <SelectValue placeholder="20" />
                 </SelectTrigger>
                 <SelectContent className="bg-white border border-slate-200 shadow-lg">
@@ -764,25 +872,57 @@ const Dashboard: React.FC = () => {
                 </SelectContent>
               </Select>
             </div>
-            <Button 
-              variant="outline" 
-              size="sm" 
-              className="flex items-center gap-2"
-              onClick={refreshPrices}
-              disabled={loading}
-            >
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-              {loading ? 'Refreshing...' : 'Refresh'}
-            </Button>
-            <Button variant="outline" size="sm" className="flex items-center gap-2">
-              <Download className="h-4 w-4" />
-              Export CSV
-            </Button>
+            <div className="flex flex-col ml-auto">
+              <label className="text-form-label mb-2 text-transparent select-none">Actions</label>
+              <div className="flex gap-4 h-10 items-center">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="text-button-primary flex items-center gap-2 h-10"
+                  onClick={refreshPrices}
+                  disabled={loading}
+                >
+                  <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                  {loading ? (
+                    <span className="loading-dots">Refreshing</span>
+                  ) : 'Refresh'}
+                </Button>
+                <Button variant="outline" size="sm" className="text-button-primary flex items-center gap-2 h-10">
+                  <Download className="h-4 w-4" />
+                  Export CSV
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
       </motion.header>
 
       <main className="container mx-auto px-6 py-8 space-y-8">
+        {/* Location Permission Banner */}
+        {locationPermission === 'denied' && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-blue-50 border border-blue-200 rounded-lg p-4"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-blue-800">
+                <MapPin className="h-4 w-4" />
+                <span className="text-sm font-medium">Enable location access for automatic region detection</span>
+              </div>
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={requestLocationAccess}
+                className="text-blue-700 border-blue-300 hover:bg-blue-100"
+              >
+                <MapPin className="h-3 w-3 mr-1" />
+                Enable Location
+              </Button>
+            </div>
+          </motion.div>
+        )}
+
         {/* Error Banner for API issues with cached data */}
         {error && prices.length > 0 && (
           <motion.div 
@@ -818,20 +958,20 @@ const Dashboard: React.FC = () => {
           {/* Price Alert Form */}
           <Card className="shadow-lg border-slate-200/50 bg-white/80 backdrop-blur-sm">
             <CardHeader className="pb-4">
-              <CardTitle className="flex items-center gap-2 text-lg">
+              <CardTitle className="text-section-header flex items-center gap-2">
                 <div className="p-2 bg-amber-100 rounded-lg">
                   <Bell className="h-4 w-4 text-amber-600" />
                 </div>
                 Price Alerts
               </CardTitle>
-              <CardDescription>Get notified when fuel prices reach your target threshold</CardDescription>
+              <CardDescription className="text-section-description">Get notified when fuel prices reach your target threshold</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 {/* Price Alert Form */}
                 <form onSubmit={handleAlertSubmit} className="space-y-4">
                   <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">Fuel Type</label>
+                    <label className="text-form-label text-slate-700">Fuel Type</label>
                     <Select value={alertForm.product} onValueChange={value => setAlertForm(f => ({ ...f, product: value }))}>
                       <SelectTrigger className="bg-white">
                         <SelectValue placeholder="Select fuel type" />
@@ -843,7 +983,7 @@ const Dashboard: React.FC = () => {
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">Area</label>
+                    <label className="text-form-label text-slate-700">Area</label>
                     <Input
                       type="text"
                       placeholder="e.g., Midwest, National, California"
@@ -854,7 +994,7 @@ const Dashboard: React.FC = () => {
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">Threshold Price</label>
+                    <label className="text-form-label text-slate-700">Threshold Price</label>
                     <div className="relative">
                       <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
                       <Input
@@ -883,7 +1023,7 @@ const Dashboard: React.FC = () => {
                       </div>
                     </div>
                   )}
-                  <Button type="submit" disabled={alertLoading} className="w-full bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600">
+                  <Button type="submit" disabled={alertLoading} className="text-button-primary w-full bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600">
                     {alertLoading ? (
                       <>
                         <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
@@ -901,7 +1041,7 @@ const Dashboard: React.FC = () => {
                 <form onSubmit={handleOrderSubmit} className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-sm font-medium text-slate-700">Fuel Type</label>
+                      <label className="text-form-label text-slate-700">Fuel Type</label>
                       <Select value={orderForm.product} onValueChange={value => setOrderForm(f => ({ ...f, product: value }))}>
                         <SelectTrigger className="bg-white">
                           <SelectValue placeholder="Select fuel" />
@@ -913,7 +1053,7 @@ const Dashboard: React.FC = () => {
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium text-slate-700">Quantity (Gallons)</label>
+                      <label className="text-form-label text-slate-700">Quantity (Gallons)</label>
                       <Input
                         type="number"
                         min="1"
@@ -927,7 +1067,7 @@ const Dashboard: React.FC = () => {
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">Area</label>
+                    <label className="text-form-label text-slate-700">Area</label>
                     <Input
                       type="text"
                       placeholder="e.g., Midwest, National, California"
@@ -938,7 +1078,7 @@ const Dashboard: React.FC = () => {
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">Location</label>
+                    <label className="text-form-label text-slate-700">Location</label>
                     <Input
                       type="text"
                       placeholder="e.g., address or city"
@@ -949,7 +1089,7 @@ const Dashboard: React.FC = () => {
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">Target Price</label>
+                    <label className="text-form-label text-slate-700">Target Price</label>
                     <div className="relative">
                       <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
                       <Input
@@ -978,7 +1118,7 @@ const Dashboard: React.FC = () => {
                       </div>
                     </div>
                   )}
-                  <Button type="submit" disabled={orderLoading} className="w-full bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600">
+                  <Button type="submit" disabled={orderLoading} className="text-button-primary w-full bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600">
                     {orderLoading ? (
                       <>
                         <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
@@ -994,17 +1134,17 @@ const Dashboard: React.FC = () => {
                 </form>
                 {/* Order History Table */}
                 <div className="md:col-span-2 mt-8">
-                  <h3 className="text-lg font-semibold mb-2">Order History</h3>
+                  <h3 className="text-section-header mb-2">Order History</h3>
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Date</TableHead>
-                        <TableHead>Product</TableHead>
-                        <TableHead>Area</TableHead>
-                        <TableHead>Location</TableHead>
-                        <TableHead>Quantity</TableHead>
-                        <TableHead>Target Price</TableHead>
-                        <TableHead>Status</TableHead>
+                        <TableHead className="text-table-header">Date</TableHead>
+                        <TableHead className="text-table-header">Product</TableHead>
+                        <TableHead className="text-table-header">Area</TableHead>
+                        <TableHead className="text-table-header">Location</TableHead>
+                        <TableHead className="text-table-header">Quantity</TableHead>
+                        <TableHead className="text-table-header">Target Price</TableHead>
+                        <TableHead className="text-table-header">Status</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1045,7 +1185,7 @@ const Dashboard: React.FC = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-green-600 mb-1">Latest Price</p>
-                  <p className="text-2xl font-bold text-green-900">${stats.latest.value}</p>
+                  <p className="text-price-display text-green-900"><span className="text-price-currency">$</span>{stats.latest.value}</p>
                   <p className="text-xs text-green-700 mt-1">per gallon</p>
                 </div>
                 <div className="p-3 bg-green-200/50 rounded-full">
@@ -1066,7 +1206,7 @@ const Dashboard: React.FC = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-blue-600 mb-1">Average Price</p>
-                  <p className="text-2xl font-bold text-blue-900">${stats.avgPrice}</p>
+                  <p className="text-price-display text-blue-900"><span className="text-price-currency">$</span>{stats.avgPrice}</p>
                   <p className="text-xs text-blue-700 mt-1">per gallon</p>
                 </div>
                 <div className="p-3 bg-blue-200/50 rounded-full">
@@ -1084,7 +1224,7 @@ const Dashboard: React.FC = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-red-600 mb-1">Highest Price</p>
-                  <p className="text-2xl font-bold text-red-900">${stats.maxPrice}</p>
+                  <p className="text-price-display text-red-900"><span className="text-price-currency">$</span>{stats.maxPrice}</p>
                   <p className="text-xs text-red-700 mt-1">per gallon</p>
                 </div>
                 <div className="p-3 bg-red-200/50 rounded-full">
@@ -1102,7 +1242,7 @@ const Dashboard: React.FC = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-emerald-600 mb-1">Lowest Price</p>
-                  <p className="text-2xl font-bold text-emerald-900">${stats.minPrice}</p>
+                  <p className="text-price-display text-emerald-900"><span className="text-price-currency">$</span>{stats.minPrice}</p>
                   <p className="text-xs text-emerald-700 mt-1">per gallon</p>
                 </div>
                 <div className="p-3 bg-emerald-200/50 rounded-full">
@@ -1126,13 +1266,13 @@ const Dashboard: React.FC = () => {
             <CardHeader className="pb-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle className="flex items-center gap-2 text-xl">
+                  <CardTitle className="text-section-header flex items-center gap-2">
                     <div className="p-2 bg-blue-100 rounded-lg">
                       <BarChart3 className="h-5 w-5 text-blue-600" />
                     </div>
                     Fuel Price Trends
                   </CardTitle>
-                  <CardDescription>Historical price movements over the last 50 weeks</CardDescription>
+                  <CardDescription className="text-section-description">Historical price movements over the last 50 weeks</CardDescription>
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" className="bg-white/50">
@@ -1173,13 +1313,13 @@ const Dashboard: React.FC = () => {
             <CardHeader className="pb-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle className="flex items-center gap-2 text-xl">
+                  <CardTitle className="text-section-header flex items-center gap-2">
                     <div className="p-2 bg-slate-100 rounded-lg">
                       <Filter className="h-5 w-5 text-slate-600" />
                     </div>
                     Fuel Prices Data
                   </CardTitle>
-                  <CardDescription>Detailed breakdown of current fuel prices by region</CardDescription>
+                  <CardDescription className="text-section-description">Detailed breakdown of current fuel prices by region</CardDescription>
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" className="bg-white/50">
@@ -1198,25 +1338,25 @@ const Dashboard: React.FC = () => {
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-slate-50/50">
-                      <TableHead className="font-semibold text-slate-700">
+                      <TableHead className="text-table-header text-slate-700">
                         <div className="flex items-center gap-2">
                           <Calendar className="h-4 w-4" />
                           Date
                         </div>
                       </TableHead>
-                      <TableHead className="font-semibold text-slate-700">
+                      <TableHead className="text-table-header text-slate-700">
                         <div className="flex items-center gap-2">
                           <MapPin className="h-4 w-4" />
                           Area
                         </div>
                       </TableHead>
-                      <TableHead className="font-semibold text-slate-700">
+                      <TableHead className="text-table-header text-slate-700">
                         <div className="flex items-center gap-2">
                           <Fuel className="h-4 w-4" />
                           Product
                         </div>
                       </TableHead>
-                      <TableHead className="font-semibold text-slate-700">
+                      <TableHead className="text-table-header text-slate-700">
                         <div className="flex items-center gap-2">
                           <DollarSign className="h-4 w-4" />
                           Price ($/GAL)
@@ -1226,11 +1366,11 @@ const Dashboard: React.FC = () => {
                   </TableHeader>
                   <TableBody>
                     {paginatedPrices.map((item, idx) => (
-                      <TableRow key={idx} className="hover:bg-slate-50/50 transition-colors">
-                        <TableCell className="font-medium text-slate-700">{item.period}</TableCell>
-                        <TableCell className="text-slate-600">{item['area-name']}</TableCell>
-                        <TableCell className="text-slate-600">{item['product-name']}</TableCell>
-                        <TableCell className="font-semibold text-green-600">${item.value}</TableCell>
+                      <TableRow key={idx} className="table-row hover:bg-slate-50/50 transition-colors">
+                        <TableCell className="text-table-data text-slate-700">{item.period}</TableCell>
+                        <TableCell className="text-table-data text-slate-600">{item['area-name']}</TableCell>
+                        <TableCell className="text-table-data text-slate-600">{item['product-name']}</TableCell>
+                        <TableCell className="text-price-display text-green-600 currency-align"><span className="text-price-currency">$</span>{item.value}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

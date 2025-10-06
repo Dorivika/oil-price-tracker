@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+python_backend/.env
+*.db
+*.db-journal
+
+# Node
+node_modules/
+.npm
+.eslintcache
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+CLEANUP_REPORT.md
+CLAUDE.local.md
+
+# Logs
+*.log
+npm-debug.log*
+
+# Testing
+.coverage
+htmlcov/
+
+# Build artifacts (except client/dist which is needed)
+*.egg-info/
+dist/
+!client/dist/
+
+# Local development
+.env.local
+.env.development
+python_backend/oil_tracker.db

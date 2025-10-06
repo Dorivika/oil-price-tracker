@@ -69,7 +69,18 @@ async function apiRequest(endpoint: string, options: RequestInit = {}, retries =
         throw new Error(`${errorMessage}`);
       }
       
-      return res.json();
+      // Check if response has content before parsing JSON
+      const text = await res.text();
+      if (!text || text.trim() === '') {
+        return {};
+      }
+      
+      try {
+        return JSON.parse(text);
+      } catch (error) {
+        console.error('Failed to parse JSON response:', text);
+        throw new Error('Invalid JSON response from server');
+      }
     } catch (error: any) {
       if (attempt === retries) {
         throw error;
@@ -91,8 +102,8 @@ async function testEndpoint(endpoint: string): Promise<boolean> {
   }
 }
 
-export async function getPrices(timePeriod?: 'hour' | 'day' | 'week', productType?: 'Gasoline' | 'Diesel') {
-  const cacheKey = `prices-${timePeriod || 'week'}-${productType || 'all'}`;
+export async function getPrices(timePeriod?: 'hour' | 'day' | 'week', productType?: 'Gasoline' | 'Diesel', region?: string) {
+  const cacheKey = `prices-${timePeriod || 'week'}-${productType || 'all'}-${region || 'National'}`;
   const cached = getCachedData(cacheKey);
   if (cached) {
     return { data: cached };
@@ -128,7 +139,7 @@ export async function getPrices(timePeriod?: 'hour' | 'day' | 'week', productTyp
       useSimulation = true;
     }
     
-    console.log(`Fetching data from: ${endpoint} for timePeriod: ${timePeriod}, productType: ${productType}, simulation: ${useSimulation}`);
+    console.log(`Fetching data from: ${endpoint} for timePeriod: ${timePeriod}, productType: ${productType}, region: ${region}, simulation: ${useSimulation}`);
     
     const json = await apiRequest(endpoint);
     console.log('Raw API response structure:', {
@@ -143,18 +154,46 @@ export async function getPrices(timePeriod?: 'hour' | 'day' | 'week', productTyp
     let processedData = Array.isArray(data) ? data : [];
     
     // Simulate different time periods if needed
-    if (useSimulation && timePeriod !== 'week') {
-      processedData = simulateTimePeriod(processedData, timePeriod);
+    if (useSimulation && timePeriod && timePeriod !== 'week') {
+      processedData = simulateTimePeriod(processedData, timePeriod, region);
       console.log(`Simulated ${timePeriod} data:`, processedData.slice(0, 3));
     }
     
-    // Filter by product type if specified
+    // Filter by product type and region if specified
     let filteredData = processedData;
+    
+    // Filter by product type
     if (productType) {
-      filteredData = processedData.filter((item: any) => 
+      filteredData = filteredData.filter((item: any) => 
         item['product-name']?.toLowerCase()?.includes(productType.toLowerCase())
       );
       console.log(`Filtered data for ${productType}:`, filteredData.slice(0, 3));
+    }
+    
+    // Filter by region
+    if (region && region !== 'National') {
+      filteredData = filteredData.filter((item: any) => {
+        const areaName = item['area-name']?.toLowerCase() || '';
+        const areaCode = item['area-code']?.toLowerCase() || '';
+        const regionLower = region.toLowerCase();
+        
+        // Regional mapping for EIA data
+        const regionMappings = {
+          'east coast': ['east coast', 'padd 1', 'new england', 'central atlantic', 'lower atlantic'],
+          'midwest': ['midwest', 'padd 2', 'great lakes', 'northern plains'],
+          'southeast': ['gulf coast', 'padd 3', 'southeast', 'south'],
+          'texas': ['texas', 'gulf coast', 'padd 3'],
+          'california': ['california', 'ca', 'west coast', 'padd 5'],
+          'west coast': ['west coast', 'padd 5', 'california', 'washington', 'oregon'],
+          'rocky mountain': ['rocky mountain', 'padd 4', 'colorado', 'utah', 'wyoming']
+        };
+        
+        const mappings = regionMappings[regionLower as keyof typeof regionMappings] || [regionLower];
+        return mappings.some(mapping => 
+          areaName.includes(mapping) || areaCode.includes(mapping)
+        );
+      });
+      console.log(`Filtered data for region ${region}:`, filteredData.slice(0, 3));
     }
     
     setCachedData(cacheKey, filteredData);
@@ -171,8 +210,8 @@ export async function getPrices(timePeriod?: 'hour' | 'day' | 'week', productTyp
   }
 }
 
-// Simulate different time periods from weekly data
-function simulateTimePeriod(weeklyData: any[], timePeriod: 'hour' | 'day' | 'week'): any[] {
+// Simulate different time periods from weekly data with region-aware pricing
+function simulateTimePeriod(weeklyData: any[], timePeriod: 'hour' | 'day' | 'week', region?: string): any[] {
   if (timePeriod === 'week' || !weeklyData.length) {
     return weeklyData;
   }
@@ -201,6 +240,7 @@ function simulateTimePeriod(weeklyData: any[], timePeriod: 'hour' | 'day' | 'wee
           value: simulatedPrice.toFixed(3),
           period: dayDate.toISOString().split('T')[0],
           'period-description': `Day ${day + 1} of week ${basePeriod}`,
+          'area-name': region && region !== 'National' ? `${region} Region` : weekItem['area-name'],
           simulated: true
         });
       }
@@ -220,6 +260,7 @@ function simulateTimePeriod(weeklyData: any[], timePeriod: 'hour' | 'day' | 'wee
           value: simulatedPrice.toFixed(3),
           period: hourDate.toISOString(),
           'period-description': `Hour ${hour}:00 of ${basePeriod}`,
+          'area-name': region && region !== 'National' ? `${region} Region` : weekItem['area-name'],
           simulated: true
         });
       }

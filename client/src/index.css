@@ -1,8 +1,5 @@
 @import "tailwindcss";
-
-
-
-@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap&subset=latin');
 
 /* Light mode only, no @theme */
 :root {
@@ -41,6 +38,396 @@
     height: 100%;
     margin: 0;
     padding: 0;
-    font-family: Inter, Segoe UI, Arial, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+    font-feature-settings: 'cv01', 'cv02', 'cv03', 'cv04', 'cv11', 'case', 'tnum';
+    font-variation-settings: normal;
+    font-optical-sizing: auto;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  /* Typography Hierarchy */
+  .text-header-main {
+    font-size: clamp(20px, 5vw, 24px);
+    font-weight: 700;
+    line-height: 1.2;
+    text-rendering: optimizeLegibility;
+  }
+
+  .text-header-sub {
+    font-size: 14px;
+    font-weight: 400;
+    letter-spacing: 0.5px;
+    opacity: 0.8;
+  }
+
+  .text-section-header {
+    font-size: 18px;
+    font-weight: 700;
+    border-bottom: 2px solid var(--color-primary);
+    padding-bottom: 8px;
+    margin-bottom: 16px;
+  }
+
+  .text-section-description {
+    font-size: 13px;
+    font-weight: 400;
+    opacity: 0.7;
+  }
+
+  .text-price-display {
+    font-size: clamp(24px, 6vw, 28px);
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  .text-price-currency {
+    font-weight: 700;
+  }
+
+  .text-form-label {
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .text-button-primary {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+  }
+
+  .text-table-header {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .text-table-data {
+    font-size: 14px;
+    font-weight: 400;
+  }
+
+  /* Input Styling */
+  input, select, textarea {
+    font-size: 15px !important;
+    padding: 12px 16px !important;
+    font-weight: 400;
+  }
+
+  input::placeholder, select::placeholder, textarea::placeholder {
+    font-size: 14px;
+    opacity: 0.3;
+  }
+
+  /* Focus States */
+  input:focus, select:focus, textarea:focus {
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  }
+
+  /* Price Change Indicators */
+  .price-increase {
+    color: #dc2626;
+    font-weight: 600;
+  }
+
+  .price-decrease {
+    color: #16a34a;
+    font-weight: 600;
+  }
+
+  /* Smooth Transitions */
+  * {
+    transition: font-weight 200ms ease, color 200ms ease;
+  }
+
+  /* Disabled States */
+  .disabled {
+    opacity: 0.5;
+    font-weight: 400;
+  }
+
+  /* Loading Animation */
+  .loading-dots::after {
+    content: '...';
+    animation: dots 2s infinite;
+  }
+
+  @keyframes dots {
+    0% { content: ''; }
+    25% { content: '.'; }
+    50% { content: '..'; }
+    75% { content: '...'; }
+    100% { content: ''; }
+  }
+
+  /* Enhanced spacing and alignment */
+  .section-spacing {
+    margin-bottom: 24px;
+  }
+
+  .form-group-spacing {
+    margin-bottom: 16px;
+  }
+
+  /* Table enhancements */
+  .table-row:nth-child(even) {
+    background-color: rgba(248, 250, 252, 0.5);
+  }
+
+  .table-row:hover {
+    background-color: rgba(241, 245, 249, 0.8);
+    font-weight: 500;
+  }
+
+  /* Subtle text shadow on headers */
+  .text-header-main, .text-section-header {
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+
+  /* Currency alignment */
+  .currency-align {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Interactive elements hover effects */
+  button:hover {
+    font-weight: 600;
+    transition: font-weight 200ms ease;
+  }
+
+  select:hover, input:hover {
+    font-weight: 500;
+    transition: font-weight 200ms ease;
+  }
+
+  /* Better visual hierarchy with margins */
+  .text-section-header {
+    margin-top: 32px;
+    margin-bottom: 20px;
+  }
+
+  .text-section-header:first-child {
+    margin-top: 0;
+  }
+
+  /* Mobile responsive enhancements */
+  @media (max-width: 768px) {
+    input, select, textarea, button {
+      font-size: 16px !important; /* Prevents iOS zoom */
+      padding: 14px 18px !important;
+    }
+
+    .text-price-display {
+      font-size: clamp(20px, 8vw, 24px);
+    }
+
+    .text-section-header {
+      font-size: 16px;
+      margin-top: 24px;
+      margin-bottom: 16px;
+    }
+
+    .text-form-label {
+      font-size: 13px;
+    }
+
+    .text-button-primary {
+      font-size: 15px;
+      padding: 14px 20px;
+    }
+
+    /* Better touch targets */
+    button {
+      min-height: 48px;
+      padding: 12px 16px;
+    }
+
+    /* Compact table on mobile */
+    .text-table-header {
+      font-size: 11px;
+      letter-spacing: 0.5px;
+    }
+
+    .text-table-data {
+      font-size: 13px;
+    }
+  }
+
+  /* Fade animation for price updates */
+  @keyframes priceUpdate {
+    0% { opacity: 0.6; transform: scale(1.02); }
+    100% { opacity: 1; transform: scale(1); }
+  }
+
+  .price-update-animation {
+    animation: priceUpdate 0.3s ease-out;
+  }
+
+  /* Loading state enhancement */
+  .loading-skeleton {
+    background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+
+  /* Classy Gradient Wave Loading Animation */
+  .gradient-loader {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 60vh;
+    gap: 2rem;
+  }
+
+  .gradient-wave-text {
+    font-size: clamp(20px, 4vw, 28px);
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-align: center;
+    margin-bottom: 2rem;
+    position: relative;
+    color: #1d4ed8;
+  }
+
+  /* Slot machine text cycling */
+  .cycling-text {
+    height: 2em;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+  }
+
+  .text-cycle {
+    position: absolute;
+    width: 100%;
+    text-align: center;
+    opacity: 0;
+    transform: translateY(50px);
+    animation: textSlide 12s infinite;
+    color: inherit;
+    background: inherit;
+    background-clip: inherit;
+    -webkit-background-clip: inherit;
+    -webkit-text-fill-color: inherit;
+  }
+
+  .text-cycle:nth-child(1) { animation-delay: 0s; }
+  .text-cycle:nth-child(2) { animation-delay: 3s; }
+  .text-cycle:nth-child(3) { animation-delay: 6s; }
+  .text-cycle:nth-child(4) { animation-delay: 9s; }
+
+  @keyframes textSlide {
+    0% {
+      opacity: 0;
+      transform: translateY(50px);
+    }
+    8.33% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    25% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    33.33% {
+      opacity: 0;
+      transform: translateY(-50px);
+    }
+    100% {
+      opacity: 0;
+      transform: translateY(-50px);
+    }
+  }
+
+  /* Floating fuel icons animation */
+  .floating-icons {
+    display: flex;
+    justify-content: center;
+    gap: 3rem;
+    margin-top: 2rem;
+  }
+
+  .floating-icon {
+    font-size: 2.5rem;
+    animation: float 3s ease-in-out infinite;
+  }
+
+  .floating-icon:nth-child(1) {
+    animation-delay: 0s;
+  }
+
+  .floating-icon:nth-child(2) {
+    animation-delay: 1s;
+  }
+
+  .floating-icon:nth-child(3) {
+    animation-delay: 2s;
+  }
+
+  @keyframes float {
+    0%, 100% {
+      transform: translateY(0) rotate(0deg);
+      opacity: 0.7;
+    }
+    25% {
+      transform: translateY(-20px) rotate(5deg);
+      opacity: 0.9;
+    }
+    50% {
+      transform: translateY(-30px) rotate(0deg);
+      opacity: 1;
+    }
+    75% {
+      transform: translateY(-20px) rotate(-5deg);
+      opacity: 0.9;
+    }
+  }
+
+  /* Progress bar animation */
+  .loading-progress {
+    width: 300px;
+    height: 6px;
+    background: rgba(59, 130, 246, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: 2rem;
+  }
+
+  .loading-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #1d4ed8, #3b82f6);
+    background-size: 200% 100%;
+    border-radius: 3px;
+    animation: progressSlide 2s ease-in-out infinite;
+  }
+
+  @keyframes progressSlide {
+    0% {
+      width: 0%;
+      background-position: -200% 0;
+    }
+    50% {
+      width: 70%;
+      background-position: 0% 0;
+    }
+    100% {
+      width: 100%;
+      background-position: 200% 0;
+    }
   }
 }
